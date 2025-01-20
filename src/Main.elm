@@ -75,7 +75,7 @@ subs {paused} =
     Sub.batch [
         Browser.Events.onKeyDown (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keydown),
         Browser.Events.onKeyUp (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keyup),
-        if not paused then Time.every 200 Tick else Sub.none
+        if not paused then Time.every 30 Tick else Sub.none
     ]
 
 
@@ -91,7 +91,7 @@ update msg ({tick, paused, entities} as model) = case msg of
     Keyup key -> case key of
         "ArrowUp" -> ({model | upPressed = False}, Cmd.none)
         "ArrowLeft" -> ({model | leftPressed = False}, Cmd.none)
-        "ArrowRight" -> ({model | leftPressed = False}, Cmd.none)
+        "ArrowRight" -> ({model | rightPressed = False}, Cmd.none)
         _ -> (model, Cmd.none)
 
 
@@ -202,7 +202,7 @@ makeShip : Float -> Float -> Entity
 makeShip x y = makeMoveable x y 10 10 
     |> (\m -> {m | 
         name = "Ship",
-        maxSpeed = Just 8,
+        maxSpeed = Just 4,
         isPlayerControlled = Just True
         })
 
@@ -243,15 +243,18 @@ makeMoveable x y width height = {defaultEntity |
 
 
 type alias Playable = {
-    thetaSpeed: Float, accel: Float, isPlayerControlled: Bool
+    speed: Float, accel: Float, 
+    thetaSpeed: Float, isPlayerControlled: Bool
     }
 
 toPlayable : Entity -> Maybe Playable
-toPlayable {thetaSpeed, accel, isPlayerControlled} = 
+toPlayable {thetaSpeed, accel, isPlayerControlled, speed} = 
     Just Playable
-        |> andMap thetaSpeed
+        |> andMap speed
         |> andMap accel
+        |> andMap thetaSpeed
         |> andMap isPlayerControlled
+        
 
 
 andMap : Maybe a -> Maybe (a -> b) -> Maybe b
@@ -282,9 +285,9 @@ commandPlayerEntities : System Model
 commandPlayerEntities ({leftPressed, rightPressed, upPressed} as model) entities =
     map (\ e -> case toPlayable e of
         Nothing -> e
-        Just ({thetaSpeed, accel}) -> {e |
+        Just ({speed}) -> {e |
                 thetaSpeed = (if leftPressed then Just -0.1 else if rightPressed then Just 0.1 else Just 0),
-                accel = if upPressed then Just 0.5 else Just 0
+                accel = if upPressed then Just 0.5 else if speed > 0 then Just -0.1 else Just 0
             }
     
     ) entities

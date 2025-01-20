@@ -10,8 +10,8 @@ import Html.Events exposing (onClick)
 fullscreen : Html msg -> Html msg
 fullscreen content = div 
     [
-        style "height" "100vh"
-        -- style "overflow-y" "hidden"
+        style "height" "100vh",
+        style "overflow" "hidden"
     ]
     [content]
 
