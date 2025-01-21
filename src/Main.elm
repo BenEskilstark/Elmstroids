@@ -6,9 +6,8 @@ import Browser
 import Browser.Events
 import Html exposing (Html, div, text, span, b, input)
 import Html.Attributes exposing (style, value)
-import Html.Events exposing (onInput)
-import List exposing (map, append, head, tail, reverse)
-import Maybe exposing (Maybe, withDefault, andThen)
+import List exposing (map, filter, head)
+import Maybe exposing (Maybe, withDefault)
 import Debug exposing (toString)
 import Time
 import Platform.Sub exposing (none)
@@ -87,6 +86,7 @@ update msg ({tick, paused, entities} as model) = case msg of
         "ArrowUp" -> ({model | upPressed = True}, Cmd.none)
         "ArrowLeft" -> ({model | leftPressed = True}, Cmd.none)
         "ArrowRight" -> ({model | rightPressed = True}, Cmd.none)
+        " " -> (addEntity (makeLaser model) model, Cmd.none)
         _ -> (model, Cmd.none)   
     Keyup key -> case key of
         "ArrowUp" -> ({model | upPressed = False}, Cmd.none)
@@ -136,41 +136,59 @@ renderEntity entity ({width, height} as model) = case entity.name of
     "Ship" -> case toMoveable entity of
         Nothing -> emptyShape
         Just ship -> renderShip ship
+    "Laser" -> case toMoveable entity of
+        Nothing -> emptyShape
+        Just laser -> renderLaser laser
     _ -> emptyShape
 
 renderAsteroid : Moveable -> Html Msg
-renderAsteroid {x, y, theta, width, height} = 
+renderAsteroid {x, y, width, height} = 
     div [
         style "position" "absolute",
         style "top" ((String.fromFloat y) ++ "px"), 
         style "left" ((String.fromFloat x) ++ "px"),
         style "width" ((String.fromFloat width) ++ "px"), 
         style "height" ((String.fromFloat height) ++ "px"),
-        style "background-color" "white",
-        style "border-radius" "50%"
+        style "border-radius" "50%",
+        style "border" "3px solid white"
     ] []
 
 renderShip : Moveable -> Html Msg
-renderShip ({x, y, theta, width, height}) = 
+renderShip ({x, y, theta, accel, width, height}) = div [
+        style "position" "absolute",
+        style "top" ((String.fromFloat y) ++ "px"), 
+        style "left" ((String.fromFloat x) ++ "px"),
+        style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
+    ] [
+        div [
+            style "border-bottom" (toString (width / 2) ++ "px solid transparent"),
+            style "border-top" (toString (width / 2) ++ "px solid transparent"),
+            style "border-left" (toString height ++ "px solid steelblue")
+            
+        ] [],
+        if accel <= 0 then emptyShape else (
+            div [
+                style "position" "absolute",
+                style "top" ((String.fromFloat (height / 4)) ++ "px"), 
+                style "left" ((String.fromFloat (-1 * width / 2)) ++ "px"),
+                style "border-bottom" (toString (width / 4) ++ "px solid transparent"),
+                style "border-top" (toString (width / 4) ++ "px solid transparent"),
+                style "border-right" (toString (height / 2) ++ "px solid orange")
+            ] []
+        )
+    ]
+
+renderLaser : Moveable -> Html Msg
+renderLaser {x, y, width, height, theta} = 
     div [
         style "position" "absolute",
         style "top" ((String.fromFloat y) ++ "px"), 
         style "left" ((String.fromFloat x) ++ "px"),
-        -- style "width" ((String.fromFloat width) ++ "px"), 
-        -- style "height" ((String.fromFloat height) ++ "px"),
-        style "width" "0",
-        style "height" "0",
-        style "border-left" (toString (width / 2) ++ "px solid transparent"),
-        style "border-right" (toString (width / 2) ++ "px solid transparent"),
-        style "border-bottom" (toString height ++ "px solid red"),
-        
-        -- style "background-color" "red",
+        style "width" ((String.fromFloat width) ++ "px"), 
+        style "height" ((String.fromFloat height) ++ "px"),
+        style "background-color" "red",
         style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
     ] []
-
-clearCanvas : Model -> Renderable
-clearCanvas ({width, height})=
-    shapes [ fill Color.black ] [ rect ( 0, 0 ) (toFloat width) (toFloat height) ]
 
 emptyShape : Html Msg
 emptyShape = span [] []
@@ -199,7 +217,7 @@ addEntities entities model = case entities of
     e :: es -> addEntity e model |> addEntities es
 
 makeShip : Float -> Float -> Entity 
-makeShip x y = makeMoveable x y 10 10 
+makeShip x y = makeMoveable x y 15 15 
     |> (\m -> {m | 
         name = "Ship",
         maxSpeed = Just 4,
@@ -215,11 +233,30 @@ makeAsteroid x y speed theta = makeMoveable x y 20 20
         maxSpeed = Just 2
         })
 
+makeLaser : Model -> Entity
+makeLaser {entities} = filter (\e -> e.isPlayerControlled == Just True) entities
+    |> head |> withDefault defaultEntity
+    |> toMoveable |> withDefault defaultMoveable
+    |> (\ {x, y, theta} -> 
+        makeMoveable x (y + 6) 15 2 
+        |>  (\m -> {m |
+            name = "Laser",
+            speed = Just 8,
+            theta = Just theta,
+            maxSpeed = Just 8
+            })
+    )
+
 
 type alias Moveable = {
     x: Float, y: Float, speed: Float, maxSpeed: Float, accel: Float, 
     theta: Float, thetaSpeed: Float, 
     width: Float, height: Float
+    }
+defaultMoveable : Moveable
+defaultMoveable = {
+    x = 0, y = 0, speed = 0, maxSpeed = 0, accel = 0,
+    theta = 0, thetaSpeed = 0, width = 0, height = 0
     }
 
 toMoveable : Entity -> Maybe Moveable
