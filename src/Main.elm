@@ -4,20 +4,15 @@ import UI
 
 import Browser
 import Browser.Events
-import Html exposing (Html, div, text, span, b, input)
-import Html.Attributes exposing (style, value)
+import Browser.Dom exposing (Viewport)
+import Html exposing (Html, div, text, span)
+import Html.Attributes exposing (style)
 import List exposing (map, filter, head)
 import Maybe exposing (Maybe, withDefault)
 import Debug exposing (toString)
 import Time
-import Platform.Sub exposing (none)
-import Json.Encode
+import Task
 import Json.Decode
-
-import Canvas exposing (Renderable, rect, shapes)
-import Canvas.Settings exposing (fill)
-import Canvas.Settings.Advanced exposing (rotate, transform, translate)
-import Color
 
 
 main : Program () Model Msg
@@ -29,16 +24,18 @@ type alias Model = {
         entities: List Entity,
         nextId: Int,
         width: Int, height: Int,
+        windowWidth: Int, windowHeight: Int,
         leftPressed: Bool, rightPressed: Bool, upPressed: Bool
     }
 type Msg = Tick Time.Posix | TogglePause 
-    | Keydown String | Keyup String
+    | Keydown String | Keyup String 
+    | WindowResize Int Int | GetViewport Viewport
 
 type alias Entity = { 
     id: Int, name: String,
     width: Maybe Float, height: Maybe Float,
     x: Maybe Float, y: Maybe Float, 
-    speed: Maybe Float, maxSpeed: Maybe Float, -- TODO: turning will be weird without vx, vy
+    speed: Maybe Float, maxSpeed: Maybe Float,
     accel: Maybe Float,
     theta: Maybe Float, thetaSpeed: Maybe Float,
     isPlayerControlled: Maybe Bool
@@ -52,11 +49,12 @@ init : () -> (Model, Cmd Msg)
 init _ = ({
         tick = 0, paused = False, isDebugMode = False,
         entities = [], nextId = 1, 
-        width = 600, height = 600,
+        width = 1400, height = 800,
+        windowWidth = 600, windowHeight = 600,
         leftPressed = False, rightPressed = False, upPressed = False
         } 
     |> addEntities initialEntities, 
-    Cmd.none)
+    Task.perform GetViewport Browser.Dom.getViewport)
 
 initialEntities : List Entity
 initialEntities = [
@@ -74,7 +72,8 @@ subs {paused} =
     Sub.batch [
         Browser.Events.onKeyDown (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keydown),
         Browser.Events.onKeyUp (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keyup),
-        if not paused then Time.every 30 Tick else Sub.none
+        if not paused then Time.every 30 Tick else Sub.none,
+        Browser.Events.onResize WindowResize
     ]
 
 
@@ -82,6 +81,11 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg ({tick, paused, entities} as model) = case msg of
     Tick _ -> ({ model | tick = tick + 1, entities = applySystems model entities }, Cmd.none)
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
+    WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
+    GetViewport v -> ({model | 
+        windowWidth = (round v.viewport.width), 
+        windowHeight = (round v.viewport.height)
+        }, Cmd.none)
     Keydown key -> case key of
         "ArrowUp" -> ({model | upPressed = True}, Cmd.none)
         "ArrowLeft" -> ({model | leftPressed = True}, Cmd.none)
@@ -104,7 +108,7 @@ view model = if model.isDebugMode
     else viewGame model
 
 viewGame : Model -> Html Msg
-viewGame ({width, height, entities} as model) = UI.fullscreen
+viewGame ({entities} as model) = UI.fullscreen
     <| div [
             style "height" "100vh",
             style "position" "relative",
@@ -129,17 +133,31 @@ renderEntities entities model = case entities of
     e :: es -> renderEntity e model :: renderEntities es model
 
 renderEntity : Entity -> Model -> Html Msg
-renderEntity entity ({width, height} as model) = case entity.name of 
+renderEntity entity model = case entity.name of 
     "Asteroid" -> case toMoveable entity of
         Nothing -> emptyShape
-        Just asteroid -> renderAsteroid asteroid
+        Just asteroid -> renderAsteroid (normalizeRenderingToWindow model asteroid)
     "Ship" -> case toMoveable entity of
         Nothing -> emptyShape
-        Just ship -> renderShip ship
+        Just ship -> renderShip (normalizeRenderingToWindow model ship)
     "Laser" -> case toMoveable entity of
         Nothing -> emptyShape
-        Just laser -> renderLaser laser
+        Just laser -> renderLaser (normalizeRenderingToWindow model laser)
     _ -> emptyShape
+
+normalizeRenderingToWindow : Model -> Moveable -> Moveable
+normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
+    let 
+        widthRatio = (toFloat windowWidth) / (toFloat width)
+        heightRatio = (toFloat windowHeight) / (toFloat height)
+    in
+        {mov | 
+            width = mov.width * widthRatio, 
+            height = mov.height * heightRatio,
+            x = mov.x * widthRatio,
+            y = mov.y * heightRatio
+        }
+
 
 renderAsteroid : Moveable -> Html Msg
 renderAsteroid {x, y, width, height} = 
@@ -319,7 +337,7 @@ moveEntity entity = case (toMoveable entity) of
         }
 
 commandPlayerEntities : System Model
-commandPlayerEntities ({leftPressed, rightPressed, upPressed} as model) entities =
+commandPlayerEntities {leftPressed, rightPressed, upPressed} entities =
     map (\ e -> case toPlayable e of
         Nothing -> e
         Just ({speed}) -> {e |
