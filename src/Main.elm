@@ -13,6 +13,7 @@ import Debug exposing (toString)
 import Time
 import Task
 import Json.Decode
+import Random exposing (generate)
 
 
 main : Program () Model Msg
@@ -30,6 +31,7 @@ type alias Model = {
 type Msg = Tick Time.Posix | TogglePause 
     | Keydown String | Keyup String 
     | WindowResize Int Int | GetViewport Viewport
+    | RandomAsteroid XYSpeedTheta
 
 type alias Entity = { 
     id: Int, name: String,
@@ -41,7 +43,9 @@ type alias Entity = {
     isPlayerControlled: Maybe Bool
     }
 type alias System model = model -> List Entity -> List Entity
-
+type alias XYSpeedTheta = {
+    x: Float, y: Float, speed: Float, theta: Float
+    }
 
 -----------------------------------------------------------------
 ---------------------------- INIT -------------------------------
@@ -54,15 +58,31 @@ init _ = ({
         leftPressed = False, rightPressed = False, upPressed = False
         } 
     |> addEntities initialEntities, 
-    Task.perform GetViewport Browser.Dom.getViewport)
+    Cmd.batch [
+        Task.perform GetViewport Browser.Dom.getViewport,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta
+        ])
 
 initialEntities : List Entity
 initialEntities = [
-    makeShip 250 250, 
-    makeAsteroid 100 150 1.5 (degrees -60), 
-    makeAsteroid 400 150 0.5 (degrees -90)
+    makeShip 250 250
     ]
 
+randomXYSpeedTheta :  Random.Generator XYSpeedTheta
+randomXYSpeedTheta = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
+    (Random.float 0 1400) 
+    (Random.float 0 800) 
+    (Random.float 0 2) 
+    (Random.float 0 (2 * pi))
 
 -----------------------------------------------------------------
 --------------------------- UPDATE ------------------------------
@@ -82,6 +102,7 @@ update msg ({tick, paused, entities} as model) = case msg of
     Tick _ -> ({ model | tick = tick + 1, entities = applySystems model entities }, Cmd.none)
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
     WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
+    RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y speed theta) model, Cmd.none)
     GetViewport v -> ({model | 
         windowWidth = (round v.viewport.width), 
         windowHeight = (round v.viewport.height)
