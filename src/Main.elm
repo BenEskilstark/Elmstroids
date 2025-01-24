@@ -7,13 +7,14 @@ import Browser.Events
 import Browser.Dom exposing (Viewport)
 import Html exposing (Html, div, text, span)
 import Html.Attributes exposing (style)
-import List exposing (map, filter, head)
+import List exposing (map, filter, head, append)
 import Maybe exposing (Maybe, withDefault)
 import Debug exposing (toString)
 import Time
 import Task
 import Json.Decode
 import Random exposing (generate)
+import Color exposing (Color)
 
 
 main : Program () Model Msg
@@ -35,12 +36,16 @@ type Msg = Tick Time.Posix | TogglePause
 
 type alias Entity = { 
     id: Int, name: String,
-    width: Maybe Float, height: Maybe Float,
-    x: Maybe Float, y: Maybe Float, 
-    speed: Maybe Float, maxSpeed: Maybe Float,
-    accel: Maybe Float,
-    theta: Maybe Float, thetaSpeed: Maybe Float,
-    isPlayerControlled: Maybe Bool
+    width: Float, height: Float,
+    x: Float, y: Float, 
+    speed: Float, maxSpeed: Float,
+    accel: Float,
+    theta: Float, thetaSpeed: Float,
+    ticksLeft: Int,
+
+    isDestroyed: Bool,
+    isPlayerControlled: Bool,
+    isShortLived: Bool
     }
 type alias System model = model -> List Entity -> List Entity
 type alias XYSpeedTheta = {
@@ -53,7 +58,7 @@ init : () -> (Model, Cmd Msg)
 init _ = ({
         tick = 0, paused = False, isDebugMode = False,
         entities = [], nextId = 1, 
-        width = 1400, height = 800,
+        width = 1400, height = 1200,
         windowWidth = 600, windowHeight = 600,
         leftPressed = False, rightPressed = False, upPressed = False
         } 
@@ -80,7 +85,7 @@ initialEntities = [
 randomXYSpeedTheta :  Random.Generator XYSpeedTheta
 randomXYSpeedTheta = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
     (Random.float 0 1400) 
-    (Random.float 0 800) 
+    (Random.float 0 1200) 
     (Random.float 0 2) 
     (Random.float 0 (2 * pi))
 
@@ -155,18 +160,13 @@ renderEntities entities model = case entities of
 
 renderEntity : Entity -> Model -> Html Msg
 renderEntity entity model = case entity.name of 
-    "Asteroid" -> case toMoveable entity of
-        Nothing -> emptyShape
-        Just asteroid -> renderAsteroid (normalizeRenderingToWindow model asteroid)
-    "Ship" -> case toMoveable entity of
-        Nothing -> emptyShape
-        Just ship -> renderShip (normalizeRenderingToWindow model ship)
-    "Laser" -> case toMoveable entity of
-        Nothing -> emptyShape
-        Just laser -> renderLaser (normalizeRenderingToWindow model laser)
+    "Asteroid" -> renderAsteroid (normalizeRenderingToWindow model entity)
+    "Ship" -> renderShip (normalizeRenderingToWindow model entity)
+    "Laser" -> renderLaser (normalizeRenderingToWindow model entity)
+    "Explosion" -> renderExplosion (normalizeRenderingToWindow model entity)
     _ -> emptyShape
 
-normalizeRenderingToWindow : Model -> Moveable -> Moveable
+normalizeRenderingToWindow : Model -> Entity -> Entity
 normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
     let 
         widthRatio = (toFloat windowWidth) / (toFloat width)
@@ -179,20 +179,19 @@ normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
             y = mov.y * heightRatio
         }
 
-
-renderAsteroid : Moveable -> Html Msg
+renderAsteroid : Entity -> Html Msg
 renderAsteroid {x, y, width, height} = 
     div [
         style "position" "absolute",
         style "top" ((String.fromFloat y) ++ "px"), 
         style "left" ((String.fromFloat x) ++ "px"),
-        style "width" ((String.fromFloat width) ++ "px"), 
-        style "height" ((String.fromFloat height) ++ "px"),
+        style "width" ((String.fromFloat (width * 1.2)) ++ "px"), 
+        style "height" ((String.fromFloat (height * 1.2)) ++ "px"),
         style "border-radius" "50%",
         style "border" "3px solid white"
     ] []
 
-renderShip : Moveable -> Html Msg
+renderShip : Entity -> Html Msg
 renderShip ({x, y, theta, accel, width, height}) = div [
         style "position" "absolute",
         style "top" ((String.fromFloat y) ++ "px"), 
@@ -217,7 +216,7 @@ renderShip ({x, y, theta, accel, width, height}) = div [
         )
     ]
 
-renderLaser : Moveable -> Html Msg
+renderLaser : Entity -> Html Msg
 renderLaser {x, y, width, height, theta} = 
     div [
         style "position" "absolute",
@@ -229,6 +228,24 @@ renderLaser {x, y, width, height, theta} =
         style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
     ] []
 
+renderExplosion : Entity -> Html Msg
+renderExplosion {x, y, ticksLeft, width} = 
+    let
+        radius = (round width) - ticksLeft
+        fradius = toFloat radius
+    in
+        div [
+            style "position" "absolute",
+            style "top" ((String.fromFloat (y - fradius / 2)) ++ "px"), 
+            style "left" ((String.fromFloat (x - fradius / 2)) ++ "px"),
+            style "width" ((String.fromInt radius) ++ "px"), 
+            style "height" ((String.fromInt radius) ++ "px"),
+            style "border-radius" "50%",
+            style "background-color" "orange",
+            style "opacity" "50%"
+        ] []
+
+
 emptyShape : Html Msg
 emptyShape = span [] []
 
@@ -237,12 +254,15 @@ emptyShape = span [] []
 defaultEntity : Entity
 defaultEntity = {
     id = 0, name = "",
-    x = Just 0, y = Just 0, 
-    speed = Just 0, maxSpeed = Just 0,
-    theta = Just 0, thetaSpeed = Just 0,
-    accel = Just 0, 
-    width = Just 0, height = Just 0, 
-    isPlayerControlled = Nothing
+    x = 0, y = 0, 
+    speed = 0, maxSpeed = 0,
+    theta = 0, thetaSpeed = 0,
+    accel = 0, 
+    width = 0, height = 0,
+    ticksLeft = 0,
+    isPlayerControlled = False,
+    isShortLived = False,
+    isDestroyed = False
     }
 
 addEntity : Entity -> Model -> Model
@@ -256,85 +276,44 @@ addEntities entities model = case entities of
     e :: es -> addEntity e model |> addEntities es
 
 makeShip : Float -> Float -> Entity 
-makeShip x y = makeMoveable x y 15 15 
-    |> (\m -> {m | 
-        name = "Ship",
-        maxSpeed = Just 4,
-        isPlayerControlled = Just True
-        })
+makeShip x y = {defaultEntity | 
+    x = x, y = y, width = 15, height = 15,
+    name = "Ship",
+    maxSpeed = 4,
+    isPlayerControlled = True
+    }
 
 makeAsteroid : Float -> Float -> Float -> Float -> Entity 
-makeAsteroid x y speed theta = makeMoveable x y 20 20 
-    |>  (\m -> {m |
-        name = "Asteroid",
-        speed = Just speed,
-        theta = Just theta,
-        maxSpeed = Just 2
-        })
+makeAsteroid x y speed theta = {defaultEntity | 
+    x = x, y = y, width = 20, height = 20,
+    name = "Asteroid",
+    speed = speed,
+    theta = theta,
+    maxSpeed = 2
+    }
 
 makeLaser : Model -> Entity
-makeLaser {entities} = filter (\e -> e.isPlayerControlled == Just True) entities
+makeLaser {entities} = filter .isPlayerControlled entities
     |> head |> withDefault defaultEntity
-    |> toMoveable |> withDefault defaultMoveable
-    |> (\ {x, y, theta} -> 
-        makeMoveable x (y + 6) 15 2 
-        |>  (\m -> {m |
-            name = "Laser",
-            speed = Just 8,
-            theta = Just theta,
-            maxSpeed = Just 8
-            })
+    |> (\ {x, y, theta} -> {defaultEntity |
+        x = x, y = (y + 6), width = 15, height = 2, 
+        name = "Laser",
+        speed = 8,
+        theta = theta,
+        maxSpeed = 8,
+        ticksLeft = 50,
+        isShortLived = True
+        }
     )
 
-
-type alias Moveable = {
-    x: Float, y: Float, speed: Float, maxSpeed: Float, accel: Float, 
-    theta: Float, thetaSpeed: Float, 
-    width: Float, height: Float
+makeExplosion : Float -> Float -> Int -> Entity
+makeExplosion x y ticks = {defaultEntity | 
+        name = "Explosion",
+        x = x, y = y,
+        width = 20,
+        ticksLeft = ticks,
+        isShortLived = True
     }
-defaultMoveable : Moveable
-defaultMoveable = {
-    x = 0, y = 0, speed = 0, maxSpeed = 0, accel = 0,
-    theta = 0, thetaSpeed = 0, width = 0, height = 0
-    }
-
-toMoveable : Entity -> Maybe Moveable
-toMoveable {x, y, speed, maxSpeed, accel, theta, thetaSpeed, width, height} = 
-    Just Moveable
-        |> andMap x
-        |> andMap y
-        |> andMap speed
-        |> andMap maxSpeed
-        |> andMap accel
-        |> andMap theta
-        |> andMap thetaSpeed
-        |> andMap width
-        |> andMap height
-
-makeMoveable : Float -> Float -> Float -> Float ->  Entity
-makeMoveable x y width height = {defaultEntity |
-    x = Just x, y = Just y,
-    width = Just width, height = Just height
-    }
-
-
-type alias Playable = {
-    speed: Float, accel: Float, 
-    thetaSpeed: Float, isPlayerControlled: Bool
-    }
-
-toPlayable : Entity -> Maybe Playable
-toPlayable {thetaSpeed, accel, isPlayerControlled, speed} = 
-    Just Playable
-        |> andMap speed
-        |> andMap accel
-        |> andMap thetaSpeed
-        |> andMap isPlayerControlled
-        
-
-
-andMap : Maybe a -> Maybe (a -> b) -> Maybe b
-andMap = Maybe.map2 (|>)
 
 
 -----------------------------------------------------------------
@@ -342,31 +321,84 @@ andMap = Maybe.map2 (|>)
 applySystems : System Model
 applySystems model entities = 
     moveEntities model entities
+    |> wrapEntities model
+    |> tickEntities model
     |> commandPlayerEntities model
+    |> computeCollisions model
+    |> makeExplosions model
+    |> destroyEntities model
 
 
 moveEntities : System Model
 moveEntities _ entities = map moveEntity entities
 
 moveEntity : Entity -> Entity
-moveEntity entity = case (toMoveable entity) of
-    Nothing -> entity
-    Just ({x, y, speed, maxSpeed, accel, theta, thetaSpeed}) -> {entity | 
-        x = Just (x + (speed * cos theta)), y = Just (y + (speed * sin theta)),
-        speed = Just (min (speed + accel) maxSpeed),
-        theta = Just (clampTheta (theta + thetaSpeed))
+moveEntity ({x, y, speed, maxSpeed, accel, theta, thetaSpeed} as entity) =
+    {entity | 
+        x = x + (speed * cos theta), y = y + (speed * sin theta),
+        speed = min (speed + accel) maxSpeed,
+        theta = clampTheta (theta + thetaSpeed)
         }
 
 commandPlayerEntities : System Model
 commandPlayerEntities {leftPressed, rightPressed, upPressed} entities =
-    map (\ e -> case toPlayable e of
-        Nothing -> e
-        Just ({speed}) -> {e |
-                thetaSpeed = (if leftPressed then Just -0.1 else if rightPressed then Just 0.1 else Just 0),
-                accel = if upPressed then Just 0.5 else if speed > 0 then Just -0.1 else Just 0
-            }
-    
+    map (\ e -> if e.isPlayerControlled 
+        then {e |
+            thetaSpeed = if leftPressed then -0.1 else if rightPressed then 0.1 else 0,
+            accel = if upPressed then 0.5 else if e.speed > 0 then -0.1 else 0
+        } else e
     ) entities
+
+wrapEntities : System Model
+wrapEntities {width, height} entities = 
+    map (\ ({x, y} as e) -> {e | 
+        x = if x < -20 
+                then x + (toFloat width) + 20 
+            else if x > (toFloat width) + 20 
+                then x - (toFloat width) - 20
+            else x,
+        y = if y < -20 
+                then y + (toFloat height) + 20 
+            else if y > (toFloat height) + 20 
+                then y - (toFloat height) - 20
+            else y
+    }
+    ) entities
+
+tickEntities : System Model
+tickEntities _ entities = map (\e -> if e.isShortLived == True
+        then {e | 
+            ticksLeft = e.ticksLeft - 1, 
+            isDestroyed = e.ticksLeft < 0
+        } else e
+    ) entities
+
+
+computeCollisions : System Model
+computeCollisions model entities = case entities of
+    [] -> entities
+    _ :: [] -> entities
+    ea :: eb :: es -> if (collides ea eb) then
+        {ea | isDestroyed = True} :: computeCollisions model ({eb | isDestroyed = True} :: es)
+        else 
+            ea :: computeCollisions model (eb :: es)
+
+collides : Entity -> Entity -> Bool
+collides ea eb = (eb.x > ea.x && eb.x < ea.x + ea.width &&
+    eb.y > ea.y && eb.y < ea.y + ea.height) ||
+    (ea.x > eb.x && ea.x < eb.x + eb.width &&
+    ea.y > eb.y && ea.y < eb.y + eb.height) 
+
+
+makeExplosions : System Model 
+makeExplosions _ entities = filter (\e -> e.name /= "Explosion") entities
+    |> filter .isDestroyed
+    |> map (\{x, y} -> makeExplosion x y 20)
+    |> append entities 
+
+destroyEntities : System Model
+destroyEntities _ entities = filter (\e -> e.isDestroyed == False) entities
+
 
 clampTheta : Float -> Float
 clampTheta theta = if theta > 2 * pi 
