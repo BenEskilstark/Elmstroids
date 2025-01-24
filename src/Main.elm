@@ -14,7 +14,6 @@ import Time
 import Task
 import Json.Decode
 import Random exposing (generate)
-import Color exposing (Color)
 
 
 main : Program () Model Msg
@@ -43,6 +42,7 @@ type alias Entity = {
     theta: Float, thetaSpeed: Float,
     ticksLeft: Int,
 
+    isCollided: String, -- name of entity it collided with
     isDestroyed: Bool,
     isPlayerControlled: Bool,
     isShortLived: Bool
@@ -52,19 +52,26 @@ type alias XYSpeedTheta = {
     x: Float, y: Float, speed: Float, theta: Float
     }
 
------------------------------------------------------------------
----------------------------- INIT -------------------------------
+
+
+--------------------------------------------------------------------------------
+---------------------------- INIT ----------------------------------------------
 init : () -> (Model, Cmd Msg)
 init _ = ({
         tick = 0, paused = False, isDebugMode = False,
         entities = [], nextId = 1, 
-        width = 1400, height = 1200,
+        width = 1400, height = 800,
         windowWidth = 600, windowHeight = 600,
         leftPressed = False, rightPressed = False, upPressed = False
         } 
     |> addEntities initialEntities, 
     Cmd.batch [
         Task.perform GetViewport Browser.Dom.getViewport,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
+        generate RandomAsteroid randomXYSpeedTheta,
         generate RandomAsteroid randomXYSpeedTheta,
         generate RandomAsteroid randomXYSpeedTheta,
         generate RandomAsteroid randomXYSpeedTheta,
@@ -85,12 +92,14 @@ initialEntities = [
 randomXYSpeedTheta :  Random.Generator XYSpeedTheta
 randomXYSpeedTheta = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
     (Random.float 0 1400) 
-    (Random.float 0 1200) 
+    (Random.float 0 800) 
     (Random.float 0 2) 
     (Random.float 0 (2 * pi))
 
------------------------------------------------------------------
---------------------------- UPDATE ------------------------------
+
+
+--------------------------------------------------------------------------------
+--------------------------- UPDATE ---------------------------------------------
 
 subs : Model -> Sub Msg
 subs {paused} = 
@@ -126,8 +135,8 @@ update msg ({tick, paused, entities} as model) = case msg of
 
 
 
------------------------------------------------------------------
---------------------------- VIEW --------------------------------
+--------------------------------------------------------------------------------
+--------------------------- VIEW -----------------------------------------------
 view : Model -> Html Msg
 view model = if model.isDebugMode 
     then viewDebug model 
@@ -150,8 +159,10 @@ viewDebug model = UI.fullscreen
         ))
     ]
 
------------------------------------------------------------------
---------------------------- CANVAS ------------------------------
+
+
+--------------------------------------------------------------------------------
+--------------------------- CANVAS ---------------------------------------------
 
 renderEntities : List Entity -> Model -> List (Html Msg)
 renderEntities entities model = case entities of 
@@ -249,8 +260,10 @@ renderExplosion {x, y, ticksLeft, width} =
 emptyShape : Html Msg
 emptyShape = span [] []
 
------------------------------------------------------------------
--------------------------- ENTITIES -----------------------------
+
+
+--------------------------------------------------------------------------------
+-------------------------- ENTITIES --------------------------------------------
 defaultEntity : Entity
 defaultEntity = {
     id = 0, name = "",
@@ -260,6 +273,7 @@ defaultEntity = {
     accel = 0, 
     width = 0, height = 0,
     ticksLeft = 0,
+    isCollided = "",
     isPlayerControlled = False,
     isShortLived = False,
     isDestroyed = False
@@ -316,8 +330,9 @@ makeExplosion x y ticks = {defaultEntity |
     }
 
 
------------------------------------------------------------------
---------------------------- SYSTEMS -----------------------------
+
+--------------------------------------------------------------------------------
+--------------------------- SYSTEMS --------------------------------------------
 applySystems : System Model
 applySystems model entities = 
     moveEntities model entities
@@ -325,6 +340,7 @@ applySystems model entities =
     |> tickEntities model
     |> commandPlayerEntities model
     |> computeCollisions model
+    |> destroyCollisions model
     |> makeExplosions model
     |> destroyEntities model
 
@@ -376,22 +392,38 @@ tickEntities _ entities = map (\e -> if e.isShortLived == True
 
 computeCollisions : System Model
 computeCollisions model entities = case entities of
-    [] -> entities
-    _ :: [] -> entities
-    ea :: eb :: es -> if (collides ea eb) then
-        {ea | isDestroyed = True} :: computeCollisions model ({eb | isDestroyed = True} :: es)
-        else 
-            ea :: computeCollisions model (eb :: es)
+    [] -> []
+    ea :: rest -> case collidesAny ea 0 rest of
+        Nothing -> ea :: computeCollisions model rest
+        Just (eb, i) -> {ea | isCollided = eb.name} 
+            :: computeCollisions model (setAt i eb rest)
+
+collidesAny : Entity -> Int -> List Entity -> Maybe (Entity, Int)
+collidesAny entity index entities = case entities of
+    [] -> Nothing
+    e :: rest -> if collides entity e 
+        then Just ({ e | isCollided = entity.name }, index)
+        else collidesAny entity (index + 1) rest
 
 collides : Entity -> Entity -> Bool
-collides ea eb = (eb.x > ea.x && eb.x < ea.x + ea.width &&
-    eb.y > ea.y && eb.y < ea.y + ea.height) ||
-    (ea.x > eb.x && ea.x < eb.x + eb.width &&
-    ea.y > eb.y && ea.y < eb.y + eb.height) 
+collides ea eb = ((eb.x > ea.x && eb.x < ea.x + ea.width) ||
+    (ea.x > eb.x && ea.x < eb.x + eb.width)) &&
+    ((eb.y > ea.y && eb.y < ea.y + ea.height) ||
+    (ea.y > eb.y && ea.y < eb.y + eb.height))
+
+
+destroyCollisions : System Model
+destroyCollisions _ entities = map (\ e -> 
+    case e.isCollided of
+        "Asteroid" -> if e.name /= "Asteroid" then {e |isDestroyed = True} else e
+        "Laser" -> if e.name == "Asteroid" then {e |isDestroyed = True} else e
+        "Ship" -> e 
+        _ -> e
+    ) entities
 
 
 makeExplosions : System Model 
-makeExplosions _ entities = filter (\e -> e.name /= "Explosion") entities
+makeExplosions _ entities = filter (\e -> e.name == "Asteroid" || e.name == "Ship") entities
     |> filter .isDestroyed
     |> map (\{x, y} -> makeExplosion x y 20)
     |> append entities 
@@ -406,3 +438,9 @@ clampTheta theta = if theta > 2 * pi
     else if theta < -2 * pi
     then theta + 2 * pi
     else theta
+
+setAt : Int -> Entity -> List Entity -> List Entity
+setAt index entity entities = case entities of 
+    [] -> []
+    e :: rest -> if index == 0 then entity :: rest else
+        e :: setAt (index - 1) entity rest
