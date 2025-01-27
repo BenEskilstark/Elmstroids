@@ -1,0 +1,14 @@
+- Refactors
+    - figure out how Random.andThen works
+    - use animationFrame instead of tick
+
+- ideas
+    - Defending stations that produce fuel and ammo
+    - Establishing new stations
+        - stations that shoot
+        - mining stations vs manufacturing stations
+        - transport ships
+    - Teching up the ship
+    - big/med/small asteroids
+    
+        
