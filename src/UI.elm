@@ -11,7 +11,8 @@ fullscreen : Html msg -> Html msg
 fullscreen content = div 
     [
         style "height" "100vh",
-        style "overflow" "hidden"
+        style "overflow" "hidden",
+        style "background-color" "black"
     ]
     [content]
 

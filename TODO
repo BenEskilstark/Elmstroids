@@ -2,8 +2,9 @@
     - figure out how Random.andThen works
     - use animationFrame instead of tick
 
+- bugs
+
 - features
-    - RandomXYTheta should take a radius and a bool to generate inside or outside that radius
     - detect game over and throw up modal
     - spawn new asteroids from outside the screen
 
@@ -12,7 +13,9 @@
         - stations that shoot
         - mining stations vs manufacturing stations
         - transport ships
+        - how to reroute stations?
     - Teching up the ship
     - big/med/small asteroids
+    - larger world outside the screen
     
         

@@ -5,7 +5,7 @@ import UI
 import Browser
 import Browser.Events
 import Browser.Dom exposing (Viewport)
-import Html exposing (Html, div, text, span)
+import Html exposing (Html, div, text, span, ul, li, h4)
 import Html.Attributes exposing (style)
 import Html.Events exposing (preventDefaultOn)
 import Json.Decode as Decode
@@ -15,6 +15,7 @@ import Debug exposing (toString)
 import Time
 import Task
 import Random exposing (generate)
+import Random.Extra exposing (choices)
 import Json.Decode exposing (Decoder)
 
 
@@ -22,9 +23,9 @@ main : Program () Model Msg
 main = Browser.element { init = init, update = update, view = view, subscriptions = subs }
 
 screenWidth : number
-screenWidth = 1400
+screenWidth = 1200
 screenHeight : number
-screenHeight = 1200
+screenHeight = 1000
 
 
 type alias Model = {
@@ -81,7 +82,7 @@ type alias XYSpeedTheta = {
 ---------------------------- INIT ----------------------------------------------
 init : () -> (Model, Cmd Msg)
 init _ = ({
-        tick = 0, paused = False, isDebugMode = False,
+        tick = 0, paused = True, isDebugMode = False,
         entities = [], nextId = 1, 
         width = screenWidth, height = screenHeight,
         windowWidth = 600, windowHeight = 600,
@@ -90,23 +91,23 @@ init _ = ({
     |> addEntities initialEntities, 
     Cmd.batch [
         Task.perform GetViewport Browser.Dom.getViewport,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomFuelDepot randomXYSpeedTheta,
-        generate RandomAmmoDepot randomXYSpeedTheta
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomFuelDepot (innerRandomXYSpeedTheta 0.25),
+        generate RandomAmmoDepot (innerRandomXYSpeedTheta 0.25)
         ])
 
 initialEntities : List Entity
@@ -114,14 +115,35 @@ initialEntities = [
     makeShip (screenWidth / 2) (screenHeight / 2)
     ]
 
-randomXYSpeedTheta :  Random.Generator XYSpeedTheta
-randomXYSpeedTheta = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
+randomXYSpeedTheta : Float -> Random.Generator XYSpeedTheta
+randomXYSpeedTheta maxSpeed = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
     (Random.float 0 screenWidth) 
     (Random.float 0 screenHeight) 
-    (Random.float 0 2) 
+    (Random.float 0 maxSpeed) 
     (Random.float 0 (2 * pi))
 
+outerRandomXYSpeedTheta : Float -> Random.Generator XYSpeedTheta
+outerRandomXYSpeedTheta maxSpeed = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
+    (randomExcludedDomain screenWidth (1/4)) 
+    (randomExcludedDomain screenHeight (1/4)) 
+    (Random.float 0 maxSpeed) 
+    (Random.float 0 (2 * pi))  
 
+innerRandomXYSpeedTheta : Float -> Random.Generator XYSpeedTheta
+innerRandomXYSpeedTheta maxSpeed = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed theta) 
+    (Random.float (screenWidth / 3) (2 * screenWidth / 3)) 
+    (Random.float (screenHeight / 3) (2 * screenHeight / 3)) 
+    (Random.float 0 maxSpeed) 
+    (Random.float 0 (2 * pi))    
+
+randomExcludedDomain : Float -> Float -> Random.Generator Float
+randomExcludedDomain domain exclusionFraction =
+    let
+        exclusionSize = domain * exclusionFraction / 2
+        rangeA = Random.float 0 (domain / 2 - exclusionSize)
+        rangeB = Random.float (domain / 2 + exclusionSize) domain
+    in
+    choices rangeA [rangeB]
 
 --------------------------------------------------------------------------------
 --------------------------- UPDATE ---------------------------------------------
@@ -140,11 +162,11 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg ({tick, paused, entities} as model) = case msg of
     Tick _ -> ({ model | tick = tick + 1} |> applySystems, Cmd.none)
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
-    Restart -> init ()
+    Restart -> init () |> (\ (m, cmds) -> ({m | paused = False}, cmds))
     WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
     RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y speed theta) model, Cmd.none)
-    RandomFuelDepot {x, y, speed, theta} -> (addEntity (makeFuelDepot x y (speed / 4) theta) model, Cmd.none)
-    RandomAmmoDepot {x, y, speed, theta} -> (addEntity (makeAmmoDepot x y (speed / 4) theta) model, Cmd.none)
+    RandomFuelDepot {x, y, speed, theta} -> (addEntity (makeFuelDepot x y speed theta) model, Cmd.none)
+    RandomAmmoDepot {x, y, speed, theta} -> (addEntity (makeAmmoDepot x y speed theta) model, Cmd.none)
     GetViewport v -> ({model | 
         windowWidth = (round v.viewport.width), 
         windowHeight = (round v.viewport.height)
@@ -176,7 +198,26 @@ update msg ({tick, paused, entities} as model) = case msg of
 view : Model -> Html Msg
 view model = if model.isDebugMode 
     then viewDebug model 
-    else viewGame model
+    else if model.paused && model.tick == 0 
+        then viewStart model
+        else viewGame model
+
+viewStart : Model -> Html Msg
+viewStart model = UI.fullscreen
+    <| UI.centered
+    <| UI.optionCard 
+        [(UI.Clickable "Start" TogglePause UI.Accept)] 
+        (div [] [
+            h4 [] [ text "Welcome to Stroidfall"],
+            ul [] [
+                li [] [text "Use left/right arrow keys to turn"],
+                li [] [text "Use up arrow key to move"],
+                li [] [text "Press spacebar to shoot"],
+                li [] [text "Replenish fuel at the orange station, ammo at the green station"],
+                li [] [text "Can you protect your stations (and yourself) from the 'stroids?"]
+            ]
+        ])
+
 
 viewGame : Model -> Html Msg
 viewGame ({entities, paused} as model) = UI.fullscreen
@@ -208,10 +249,8 @@ viewGame ({entities, paused} as model) = UI.fullscreen
     ]
 
 keyDecoder : Decoder (Msg, Bool)
-keyDecoder =
-    Decode.field "key" Decode.string
-        |> Decode.andThen (\key -> Decode.succeed (KeyDown "none", key == " "))
-    
+keyDecoder = Decode.field "key" Decode.string
+    |> Decode.andThen (\key -> Decode.succeed (KeyDown "none", key == " "))
     
 
 viewDebug : Model -> Html Msg
@@ -244,7 +283,7 @@ renderEntity entity model = case entity.name of
     _ -> emptyShape
 
 normalizeRenderingToWindow : Model -> Entity -> Entity
-normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
+normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov = 
     let 
         widthRatio = (toFloat windowWidth) / (toFloat width)
         heightRatio = (toFloat windowHeight) / (toFloat height)
@@ -266,10 +305,11 @@ render model renderFn entity =
             style "position" "absolute",
             style "top" ((String.fromFloat (y - height / 2)) ++ "px"), 
             style "left" ((String.fromFloat (x - width / 2)) ++ "px"),
+            style "transform-origin" "center",
             style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
         ] [
-            -- div [style "width" ((String.fromFloat width) ++ "px"), style "height" ((String.fromFloat height) ++ "px"), style "border-radius" "50%", style "background-color" "red"] [],
             renderFn e
+            -- renderBoundingCircle e
         ]
 
 renderAsteroid : Entity -> Html Msg
@@ -287,6 +327,9 @@ renderShip ({x, y, theta, accel, width, height}) = div [] [
         style "border-bottom" (toString (width / 2) ++ "px solid transparent"),
         style "border-top" (toString (width / 2) ++ "px solid transparent"),
         style "border-left" (toString height ++ "px solid steelblue")
+        -- style "background-color" "steelblue",
+        -- style "width" ((String.fromFloat width) ++ "px"), 
+        -- style "height" ((String.fromFloat height) ++ "px")
         
     ] [],
     if accel <= 0 then emptyShape else (
@@ -313,6 +356,7 @@ renderExplosion : Entity -> Html Msg
 renderExplosion {x, y, ticksLeft, width} = 
     let
         radius = (round width) - ticksLeft
+        fradius = toFloat radius
     in
         div [
             -- style "position" "absolute",
@@ -329,11 +373,19 @@ renderFuelDepot : Entity -> Html Msg
 renderFuelDepot {x, y, width, height, supplyRadius, fuel, maxFuel} = 
     div [] [
         div [
+            -- style "position" "absolute",
+            -- style "top" "0px", style "left" "0px",
             style "width" ((String.fromFloat width) ++ "px"), 
             style "height" ((String.fromFloat height) ++ "px"),
-            style "background-color" "orange",
-            style "font-size" "8px"
-        ] [ text (toString fuel ++ "/" ++ toString maxFuel)],
+            style "border" "2px solid orange"
+        ] [],
+        div [
+            style "position" "absolute",
+            style "top" "2px", style "left" "2px",
+            style "width" ((String.fromFloat width) ++ "px"), 
+            style "height" (String.fromFloat ((toFloat fuel) / (toFloat maxFuel) * height) ++ "px"),
+            style "background-color" "orange"
+        ] [],
         div [
             style "position" "absolute",
             style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
@@ -341,7 +393,7 @@ renderFuelDepot {x, y, width, height, supplyRadius, fuel, maxFuel} =
             style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
             style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
             style "border-radius" "50%",
-            style "border" "1px solid red"
+            style "border" "1px solid green"
         ] []
     ]
 
@@ -349,11 +401,18 @@ renderAmmoDepot : Entity -> Html Msg
 renderAmmoDepot {x, y, width, height, supplyRadius, ammo, maxAmmo} = 
     div [] [
         div [
+            style "position" "absolute",
             style "width" ((String.fromFloat width) ++ "px"), 
             style "height" ((String.fromFloat height) ++ "px"),
-            style "background-color" "green",
-            style "font-size" "8px"
-        ] [ text (toString ammo ++ "/" ++ toString maxAmmo)],
+            style "border" "2px solid red"
+        ] [],
+        div [
+            style "position" "absolute",
+            style "top" "2px", style "left" "2px",
+            style "width" ((String.fromFloat width) ++ "px"), 
+            style "height" (String.fromFloat ((toFloat ammo) / (toFloat maxAmmo) * height) ++ "px"),
+            style "background-color" "red"
+        ] [],
         div [
             style "position" "absolute",
             style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
@@ -361,10 +420,27 @@ renderAmmoDepot {x, y, width, height, supplyRadius, ammo, maxAmmo} =
             style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
             style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
             style "border-radius" "50%",
-            style "border" "1px solid red"
+            style "border" "1px solid green"
         ] []
     ]
 
+
+renderBoundingCircle : Entity -> Html msg
+renderBoundingCircle { x, y, width, height } =
+    let
+        radius = min (width / 2) (height / 2)
+    in
+        div
+            [ style "position" "absolute"
+            , style "border" "2px dashed red"
+            , style "border-radius" "50%"
+            , style "width" (String.fromFloat (radius * 2) ++ "px")
+            , style "height" (String.fromFloat (radius * 2) ++ "px")
+            , style "top" "0px"
+            , style "left" "0px"
+            , style "background-color" "rgba(255, 0, 0, 0.3)" -- Semi-transparent fill
+            ]
+            []
 
 emptyShape : Html Msg
 emptyShape = span [] []
@@ -453,7 +529,7 @@ makeFuelDepot x y speed theta = {defaultEntity |
     name = "Fuel Depot",
     x = x, y = y, 
     width = 20, height = 20,
-    supplyRadius = 150,
+    supplyRadius = 120,
     speed = speed,
     theta = theta,
     maxSpeed = 1,
@@ -620,11 +696,43 @@ collidesAny entity entities = case entities of
         then Just { e | isCollided = entity.name }
         else collidesAny entity rest
 
+-- collides : Entity -> Entity -> Bool
+-- collides ea eb = ((eb.x > ea.x && eb.x < ea.x + ea.width) ||
+--     (ea.x > eb.x && ea.x < eb.x + eb.width)) &&
+--     ((eb.y > ea.y && eb.y < ea.y + ea.height) ||
+--     (ea.y > eb.y && ea.y < eb.y + eb.height))
+
 collides : Entity -> Entity -> Bool
-collides ea eb = ((eb.x > ea.x && eb.x < ea.x + ea.width) ||
-    (ea.x > eb.x && ea.x < eb.x + eb.width)) &&
-    ((eb.y > ea.y && eb.y < ea.y + ea.height) ||
-    (ea.y > eb.y && ea.y < eb.y + eb.height))
+collides ea eb =
+    let
+        distance = sqrt ((eb.x - ea.x) ^ 2 + (eb.y - ea.y) ^ 2)
+        -- Calculate the sum of the radii (assuming ea and eb are close enough to circular)
+        radiusA = min (ea.width / 2) (ea.height / 2)
+        radiusB = min (eb.width / 2) (eb.height / 2)
+        radiiSum = radiusA + radiusB
+    in
+        -- If the distance between centers is less than the sum of the radii, they're colliding
+        distance < radiiSum
+
+
+-- collides : Entity -> Entity -> Bool
+-- collides ea eb =
+--     let
+--         -- Calculate the X and Y range for ea's area
+--         eaLeft = ea.x - (ea.width / 2)
+--         eaRight = ea.x + (ea.width / 2)
+--         eaTop = ea.y - (ea.height / 2)
+--         eaBottom = ea.y + (ea.height / 2)
+--         -- Calculate the X and Y range for eb's area
+--         ebLeft = eb.x - (eb.width / 2)
+--         ebRight = eb.x + (eb.width / 2)
+--         ebTop = eb.y - (eb.height / 2)
+--         ebBottom = eb.y + (eb.height / 2)
+--     in
+--         -- Check if ea's area intersects with eb's area horizontally
+--         ((ebLeft < eaRight) && (ebRight > eaLeft)) &&
+--         -- Check if ea's area intersects with eb's area vertically
+--         ((ebTop < eaBottom) && (ebBottom > eaTop))
 
 
 destroyCollisions : EntitySystem
