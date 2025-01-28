@@ -210,7 +210,7 @@ viewGame ({entities, paused} as model) = UI.fullscreen
 keyDecoder : Decoder (Msg, Bool)
 keyDecoder =
     Decode.field "key" Decode.string
-        |> Decode.andThen (\_ -> Decode.succeed (KeyDown "none", True))
+        |> Decode.andThen (\key -> Decode.succeed (KeyDown "none", key == " "))
     
     
 
