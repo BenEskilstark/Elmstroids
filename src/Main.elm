@@ -7,19 +7,23 @@ import Browser.Events
 import Browser.Dom exposing (Viewport)
 import Html exposing (Html, div, text, span)
 import Html.Attributes exposing (style)
-import List exposing (map, filter, indexedMap, foldl, length)
-import Maybe exposing (Maybe, withDefault)
+import Html.Events exposing (preventDefaultOn)
+import Json.Decode as Decode
+import List exposing (map, head, filter, indexedMap, foldl, length)
+import Maybe exposing (Maybe, andThen)
 import Debug exposing (toString)
 import Time
 import Task
-import Json.Decode
 import Random exposing (generate)
+import Json.Decode exposing (Decoder)
 
 
 main : Program () Model Msg
 main = Browser.element { init = init, update = update, view = view, subscriptions = subs }
 
+screenWidth : number
 screenWidth = 1400
+screenHeight : number
 screenHeight = 1200
 
 
@@ -32,11 +36,13 @@ type alias Model = {
         windowWidth: Int, windowHeight: Int,
         leftPressed: Bool, rightPressed: Bool, upPressed: Bool
     }
-type Msg = Tick Time.Posix | TogglePause 
-    | Keydown String | Keyup String 
+type Msg = Tick Time.Posix 
+    | TogglePause | Restart
+    | KeyDown String | KeyUp String 
     | WindowResize Int Int | GetViewport Viewport
     | RandomAsteroid XYSpeedTheta
     | RandomFuelDepot XYSpeedTheta
+    | RandomAmmoDepot XYSpeedTheta
 
 type alias EntityId = Int
 type alias Entity = { 
@@ -49,11 +55,13 @@ type alias Entity = {
     ticksLeft: Int,
 
     fuel: Int, maxFuel: Int,
-    ammo: Int,
+    ammo: Int, maxAmmo: Int,
     supplyRadius: Float,
 
     isFueled: Bool,
     isFuelDepot: Bool,
+    isArmed: Bool,
+    isAmmoDepot: Bool,
     isCollided: String, -- name of entity it collided with
     isDestroyed: Bool,
     isPlayerControlled: Bool,
@@ -97,12 +105,13 @@ init _ = ({
         generate RandomAsteroid randomXYSpeedTheta,
         generate RandomAsteroid randomXYSpeedTheta,
         generate RandomAsteroid randomXYSpeedTheta,
-        generate RandomFuelDepot randomXYSpeedTheta
+        generate RandomFuelDepot randomXYSpeedTheta,
+        generate RandomAmmoDepot randomXYSpeedTheta
         ])
 
 initialEntities : List Entity
 initialEntities = [
-    makeShip 250 250
+    makeShip (screenWidth / 2) (screenHeight / 2)
     ]
 
 randomXYSpeedTheta :  Random.Generator XYSpeedTheta
@@ -120,8 +129,8 @@ randomXYSpeedTheta = Random.map4 (\x y speed theta -> XYSpeedTheta x y speed the
 subs : Model -> Sub Msg
 subs {paused} = 
     Sub.batch [
-        Browser.Events.onKeyDown (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keydown),
-        Browser.Events.onKeyUp (Json.Decode.field "key" Json.Decode.string |> Json.Decode.map Keyup),
+        Browser.Events.onKeyDown (Decode.field "key" Decode.string |> Decode.map KeyDown),
+        Browser.Events.onKeyUp (Decode.field "key" Decode.string |> Decode.map KeyUp),
         if not paused then Time.every 30 Tick else Sub.none,
         Browser.Events.onResize WindowResize
     ]
@@ -131,14 +140,16 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg ({tick, paused, entities} as model) = case msg of
     Tick _ -> ({ model | tick = tick + 1} |> applySystems, Cmd.none)
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
+    Restart -> init ()
     WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
     RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y speed theta) model, Cmd.none)
-    RandomFuelDepot {x, y, speed, theta} -> (addEntity (makeFuelDepot x y speed theta) model, Cmd.none)
+    RandomFuelDepot {x, y, speed, theta} -> (addEntity (makeFuelDepot x y (speed / 4) theta) model, Cmd.none)
+    RandomAmmoDepot {x, y, speed, theta} -> (addEntity (makeAmmoDepot x y (speed / 4) theta) model, Cmd.none)
     GetViewport v -> ({model | 
         windowWidth = (round v.viewport.width), 
         windowHeight = (round v.viewport.height)
         }, Cmd.none)
-    Keydown key -> case key of
+    KeyDown key -> if paused then (model, Cmd.none) else case key of
         "ArrowUp" -> ({model | upPressed = True}, Cmd.none)
         "ArrowLeft" -> ({model | leftPressed = True}, Cmd.none)
         "ArrowRight" -> ({model | rightPressed = True}, Cmd.none)
@@ -152,7 +163,7 @@ update msg ({tick, paused, entities} as model) = case msg of
                     }),
             Cmd.none)
         _ -> (model, Cmd.none)   
-    Keyup key -> case key of
+    KeyUp key -> case key of
         "ArrowUp" -> ({model | upPressed = False}, Cmd.none)
         "ArrowLeft" -> ({model | leftPressed = False}, Cmd.none)
         "ArrowRight" -> ({model | rightPressed = False}, Cmd.none)
@@ -168,8 +179,10 @@ view model = if model.isDebugMode
     else viewGame model
 
 viewGame : Model -> Html Msg
-viewGame ({entities} as model) = UI.fullscreen
-    <| div [] [
+viewGame ({entities, paused} as model) = UI.fullscreen
+    <| div [
+        preventDefaultOn "keydown" keyDecoder
+    ] [
         (div [
             style "height" "100vh",
             style "position" "relative",
@@ -177,15 +190,27 @@ viewGame ({entities} as model) = UI.fullscreen
         ] (renderEntities entities model)),
         (div [
             style "position" "absolute",
+            style "display" "flex",
+            style "gap" "15px",
             style "z-index" "3",
             style "background-color" "white",
             style "top" "0px",
             style "padding" "10px"
         ] [
-            text ("Fuel: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.fuel)))),
-            text ("Ammo: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.ammo))))
+            UI.toButton (UI.Clickable 
+                (if paused then "Start" else "Pause") 
+                TogglePause UI.Default
+            ),
+            UI.toButton (UI.Clickable "Restart" Restart UI.Reject),
+            span [] [text ("Fuel: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.fuel))))],
+            span [] [text ("Ammo: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.ammo))))]
         ])
     ]
+
+keyDecoder : Decoder (Msg, Bool)
+keyDecoder =
+    Decode.field "key" Decode.string
+        |> Decode.andThen (\_ -> Decode.succeed (KeyDown "none", True))
     
     
 
@@ -215,6 +240,7 @@ renderEntity entity model = case entity.name of
     "Laser" -> render model renderLaser entity
     "Explosion" -> render model renderExplosion entity
     "Fuel Depot" -> render model renderFuelDepot entity
+    "Ammo Depot" -> render model renderAmmoDepot entity
     _ -> emptyShape
 
 normalizeRenderingToWindow : Model -> Entity -> Entity
@@ -300,19 +326,40 @@ renderExplosion {x, y, ticksLeft, width} =
         ] []
 
 renderFuelDepot : Entity -> Html Msg
-renderFuelDepot {x, y, width, height, supplyRadius} = 
+renderFuelDepot {x, y, width, height, supplyRadius, fuel, maxFuel} = 
     div [] [
         div [
             style "width" ((String.fromFloat width) ++ "px"), 
             style "height" ((String.fromFloat height) ++ "px"),
-            style "border" "3px solid orange"
-        ] [],
+            style "background-color" "orange",
+            style "font-size" "8px"
+        ] [ text (toString fuel ++ "/" ++ toString maxFuel)],
         div [
             style "position" "absolute",
-            style "top" ((String.fromFloat (supplyRadius / -2 + height / 2)) ++ "px"), 
-            style "left" ((String.fromFloat (supplyRadius / -2 + width / 2)) ++ "px"),
-            style "width" ((String.fromFloat (supplyRadius)) ++ "px"), 
-            style "height" ((String.fromFloat (supplyRadius)) ++ "px"),
+            style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
+            style "left" ((String.fromFloat (-1 * supplyRadius + width / 2)) ++ "px"),
+            style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
+            style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
+            style "border-radius" "50%",
+            style "border" "1px solid red"
+        ] []
+    ]
+
+renderAmmoDepot : Entity -> Html Msg
+renderAmmoDepot {x, y, width, height, supplyRadius, ammo, maxAmmo} = 
+    div [] [
+        div [
+            style "width" ((String.fromFloat width) ++ "px"), 
+            style "height" ((String.fromFloat height) ++ "px"),
+            style "background-color" "green",
+            style "font-size" "8px"
+        ] [ text (toString ammo ++ "/" ++ toString maxAmmo)],
+        div [
+            style "position" "absolute",
+            style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
+            style "left" ((String.fromFloat (-1 * supplyRadius + width / 2)) ++ "px"),
+            style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
+            style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
             style "border-radius" "50%",
             style "border" "1px solid red"
         ] []
@@ -337,7 +384,7 @@ defaultEntity = {
     ticksLeft = 0,
 
     fuel = 0, maxFuel = 0,
-    ammo = 0,
+    ammo = 0, maxAmmo = 0,
     supplyRadius = 0,
 
     isCollided = "",
@@ -345,7 +392,9 @@ defaultEntity = {
     isShortLived = False,
     isDestroyed = False,
     isFueled = False,
-    isFuelDepot = False
+    isFuelDepot = False,
+    isArmed = False,
+    isAmmoDepot = False
     }
 
 addEntity : Entity -> Model -> Model
@@ -363,10 +412,11 @@ makeShip x y = {defaultEntity |
     x = x, y = y, width = 15, height = 15,
     name = "Ship",
     maxSpeed = 4,
-    fuel = 200, maxFuel = 250,
-    ammo = 3,
+    fuel = 300, maxFuel = 300,
+    ammo = 5, maxAmmo = 10,
     isPlayerControlled = True,
-    isFueled = True
+    isFueled = True,
+    isArmed = True
     }
 
 makeAsteroid : Float -> Float -> Float -> Float -> Entity 
@@ -403,12 +453,28 @@ makeFuelDepot x y speed theta = {defaultEntity |
     name = "Fuel Depot",
     x = x, y = y, 
     width = 20, height = 20,
-    supplyRadius = 100,
+    supplyRadius = 150,
     speed = speed,
     theta = theta,
     maxSpeed = 1,
-    fuel = 1000, maxFuel = 1000
+    fuel = 1000, maxFuel = 1000,
+    isFuelDepot = True
     }
+
+makeAmmoDepot : Float -> Float -> Float -> Float -> Entity
+makeAmmoDepot x y speed theta = {defaultEntity |
+    name = "Ammo Depot",
+    x = x, y = y, 
+    width = 20, height = 20,
+    supplyRadius = 120,
+    speed = speed,
+    theta = theta,
+    maxSpeed = 1,
+    ammo = 50, maxAmmo = 50,
+    isAmmoDepot = True
+    }
+
+
 
 --------------------------------------------------------------------------------
 --------------------------- SYSTEMS --------------------------------------------
@@ -418,7 +484,8 @@ applySystems model =
     |> wrapEntities
     |> (\ mod -> {mod | entities = tickEntities mod.entities})
     |> commandPlayerEntities
-    -- |> refuelEntities model
+    |> (\ mod -> {mod | entities = refuelEntities mod.entities})
+    |> (\ mod -> {mod | entities = rearmEntities mod.entities})
     |> (\ mod -> {mod | entities = useFuel mod.entities})
     |> (\ mod -> {mod | entities = computeCollisions mod.entities})
     |> (\ mod -> {mod | entities = destroyCollisions mod.entities})
@@ -437,6 +504,7 @@ moveEntity ({x, y, speed, maxSpeed, accel, theta, thetaSpeed} as entity) =
         theta = clampTheta (theta + thetaSpeed)
         }
 
+
 wrapEntities : ModelSystem
 wrapEntities ({width, height, entities} as model)  = { model | entities = 
     map (\ ({x, y} as e) -> {e | 
@@ -454,6 +522,7 @@ wrapEntities ({width, height, entities} as model)  = { model | entities =
     ) entities
     }
 
+
 tickEntities : EntitySystem
 tickEntities entities = map (\e -> if e.isShortLived == True
         then {e | 
@@ -461,6 +530,7 @@ tickEntities entities = map (\e -> if e.isShortLived == True
             isDestroyed = e.ticksLeft < 0
         } else e
     ) entities
+
 
 commandPlayerEntities : ModelSystem
 commandPlayerEntities ({leftPressed, rightPressed, upPressed, entities} as model)  =
@@ -473,12 +543,56 @@ commandPlayerEntities ({leftPressed, rightPressed, upPressed, entities} as model
         ) entities
     }
 
--- refuelEntities : System Model
--- refuelEntities model entities =
---     let
---         depots = filter .isFuelDepot entities
---     in
---         map (\ e -> if e.isFueled && inAnyRadius e depots then {}
+
+refuelEntities : EntitySystem
+refuelEntities entities = foldl
+    (resupplyEntity .isFuelDepot fuelAccessor 2)
+    entities 
+    (List.filter .isFueled entities)
+
+resupplyEntity : (Entity -> Bool) -> FieldAccessor Int -> Int -> Entity -> List Entity -> List Entity
+resupplyEntity fn accessor amount e entities =
+    let 
+        depots = List.filter fn entities
+    in 
+        case inAnyRadius e depots of
+            Nothing -> entities
+            Just depotId -> case getEntity depotId entities of
+                Nothing -> entities -- shouldn't happen
+                Just depot ->
+                    let
+                        (updatedDepot, updatedEntity) = transferVal accessor amount depot e
+                    in
+                        setEntity updatedEntity (setEntity updatedDepot entities)
+
+transferVal : FieldAccessor Int -> Int -> Entity -> Entity -> (Entity, Entity)
+transferVal accessor amount fromEntity toEntity =
+    let
+        currentAmountTo = accessor.getter toEntity
+        maxCapacityTo = accessor.maxGetter toEntity
+        spaceAvailable = maxCapacityTo - currentAmountTo
+        amountToTransfer = min amount spaceAvailable
+        { result, amountSubtracted } = trySubtract (accessor.getter fromEntity) amountToTransfer
+        newFrom = accessor.setter result fromEntity
+        newTo = accessor.setter (currentAmountTo + amountSubtracted) toEntity
+    in
+    (newFrom, newTo)
+
+inAnyRadius : Entity -> List Entity -> Maybe EntityId 
+inAnyRadius entity depots = filter (inRadius entity) depots
+    |> head |> andThen (\e -> Just e.id)
+
+inRadius : Entity -> Entity -> Bool
+inRadius ent {x, y, supplyRadius} = 
+    sqrt ((ent.x - x) ^ 2 + (ent.y - y) ^ 2) <= supplyRadius
+
+
+rearmEntities : EntitySystem
+rearmEntities entities = foldl 
+    (resupplyEntity .isAmmoDepot ammoAccessor 1)
+    entities 
+    (List.filter .isArmed entities)
+
 
 useFuel : EntitySystem
 useFuel entities = 
@@ -519,8 +633,9 @@ destroyCollisions entities = map (\ e ->
         "Asteroid" -> if e.name /= "Asteroid" then {e |isDestroyed = True} else e
         "Laser" -> if e.name /= "Ship" then {e |isDestroyed = True} else e
         "Ship" -> if e.name /= "Laser" then {e |isDestroyed = True} else e
+        "Explosion" -> e
         "" -> e
-        _ -> {e |isDestroyed = True}
+        _ -> {e | isDestroyed = True}
     ) entities
 
 
@@ -528,7 +643,7 @@ makeExplosions : ModelSystem
 makeExplosions ({nextId, entities} as model) =
     let
         explosions = filter 
-            (\e -> e.name /= "Explosion") entities
+            (\e -> e.name /= "Explosion" && e.name /= "Laser" ) entities
             |> filter .isDestroyed
             |> indexedMap (\ i {x, y} -> (makeExplosion x y 20) |> (\ e -> {e | id = nextId + i}))
     in { model | 
@@ -536,9 +651,40 @@ makeExplosions ({nextId, entities} as model) =
         entities = explosions ++ entities
     }
 
+
 destroyEntities : EntitySystem
 destroyEntities entities = filter (\e -> e.isDestroyed == False) entities
 
+
+
+--------------------------------------------------------------------------------
+--------------------------- HELPERS --------------------------------------------
+
+type alias FieldAccessor a = {
+        getter : Entity -> a,
+        maxGetter : Entity -> a,
+        setter : a -> Entity -> Entity
+    }
+
+ammoAccessor : FieldAccessor Int
+ammoAccessor = {
+    getter = .ammo,
+    maxGetter = .maxAmmo,
+    setter = (\ value entity -> { entity | ammo = value })
+    }
+
+fuelAccessor : FieldAccessor Int
+fuelAccessor = {
+    getter = .fuel,
+    maxGetter = .maxFuel,
+    setter = (\ value entity -> { entity | fuel = value })
+    }
+
+
+trySubtract : number -> number -> {result: number, amountSubtracted: number}
+trySubtract subFrom sub = if subFrom - sub < 0
+    then {result = 0, amountSubtracted = subFrom}
+    else {result = subFrom - sub, amountSubtracted = sub}
 
 clampTheta : Float -> Float
 clampTheta theta = if theta > 2 * pi 
@@ -546,6 +692,11 @@ clampTheta theta = if theta > 2 * pi
     else if theta < -2 * pi
     then theta + 2 * pi
     else theta
+
+getEntity : EntityId -> List Entity -> Maybe Entity
+getEntity id entities = case entities of 
+    [] -> Nothing
+    e :: rest -> if e.id == id then Just e else getEntity id rest
 
 setEntity : Entity -> List Entity -> List Entity
 setEntity entity entities = case entities of 

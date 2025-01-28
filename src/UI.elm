@@ -3,7 +3,7 @@ module UI exposing (..)
 import Tuple exposing (..)
 import String exposing (..)
 import Html exposing (..)
-import Html.Attributes exposing (style)
+import Html.Attributes exposing (style, attribute)
 import Html.Events exposing (onClick)
 
 
@@ -75,6 +75,7 @@ optionCard clickables content = card (
 toButton : Clickable msg -> Html msg
 toButton {label, msg, clickType} = button 
     (
+        attribute "onblur" "" ::
         onClick msg ::
         case clickType of 
             Default -> []
