@@ -48,7 +48,7 @@ type Msg = Tick Time.Posix
 type alias EntityId = Int
 type alias Entity = { 
     id: EntityId, name: String,
-    width: Float, height: Float,
+    radius: Float,
     x: Float, y: Float, 
     speed: Float, maxSpeed: Float,
     accel: Float,
@@ -177,7 +177,7 @@ update msg ({tick, paused, entities} as model) = case msg of
         "ArrowRight" -> ({model | rightPressed = True}, Cmd.none)
         " " -> (filter .isPlayerControlled entities
                 |> foldl (\ {x, y, theta, ammo} mod ->
-                    if ammo > 0 then addEntity (makeLaser x y theta) mod else mod) model
+                    if ammo > 0 then addEntity (makeLaser (x + (cos theta) * 5) (y + (sin theta) * 5) theta) mod else mod) model
                 |> (\ mod ->
                     {mod | entities = map (\ e ->
                         if e.isPlayerControlled then {e | ammo = max 0 (e.ammo - 1)} else e ) 
@@ -203,7 +203,7 @@ view model = if model.isDebugMode
         else viewGame model
 
 viewStart : Model -> Html Msg
-viewStart model = UI.fullscreen
+viewStart _ = UI.fullscreen
     <| UI.centered
     <| UI.optionCard 
         [(UI.Clickable "Start" TogglePause UI.Accept)] 
@@ -289,8 +289,7 @@ normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
         heightRatio = (toFloat windowHeight) / (toFloat height)
     in
         {mov | 
-            width = mov.width * widthRatio, 
-            height = mov.height * heightRatio,
+            radius = mov.radius * widthRatio, 
             supplyRadius = mov.supplyRadius * widthRatio,
             x = mov.x * widthRatio,
             y = mov.y * heightRatio
@@ -299,34 +298,35 @@ normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov =
 render : Model -> (Entity -> Html Msg) -> Entity -> Html Msg
 render model renderFn entity = 
     let 
-       ({x, y, theta, width, height} as e) = normalizeRenderingToWindow model entity
+       ({x, y, theta, radius} as e) = normalizeRenderingToWindow model entity
     in
         div [
             style "position" "absolute",
-            style "top" ((String.fromFloat (y - height / 2)) ++ "px"), 
-            style "left" ((String.fromFloat (x - width / 2)) ++ "px"),
+            style "top" ((String.fromFloat (y - radius)) ++ "px"), 
+            style "left" ((String.fromFloat (x - radius)) ++ "px"),
             style "transform-origin" "center",
             style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
         ] [
             renderFn e
-            -- renderBoundingCircle e
+            , renderBoundingCircle e
         ]
 
 renderAsteroid : Entity -> Html Msg
-renderAsteroid {x, y, width, height} = 
+renderAsteroid {radius} = 
     div [
-        style "width" ((String.fromFloat width) ++ "px"), 
-        style "height" ((String.fromFloat height) ++ "px"),
+        style "width" ((String.fromFloat (radius * 2)) ++ "px"), 
+        style "height" ((String.fromFloat (radius * 2)) ++ "px"),
         style "border-radius" "50%",
-        style "border" "3px solid white"
+        style "border" "3px solid white",
+        style "box-sizing" "border-box"
     ] []
 
 renderShip : Entity -> Html Msg
-renderShip ({x, y, theta, accel, width, height}) = div [] [
+renderShip ({accel, radius}) = div [] [
     div [
-        style "border-bottom" (toString (width / 2) ++ "px solid transparent"),
-        style "border-top" (toString (width / 2) ++ "px solid transparent"),
-        style "border-left" (toString height ++ "px solid steelblue")
+        style "border-bottom" (toString radius ++ "px solid transparent"),
+        style "border-top" (toString radius ++ "px solid transparent"),
+        style "border-left" (toString (radius * 2) ++ "px solid steelblue")
         -- style "background-color" "steelblue",
         -- style "width" ((String.fromFloat width) ++ "px"), 
         -- style "height" ((String.fromFloat height) ++ "px")
@@ -335,61 +335,59 @@ renderShip ({x, y, theta, accel, width, height}) = div [] [
     if accel <= 0 then emptyShape else (
         div [
             style "position" "absolute",
-            style "top" ((String.fromFloat (height / 4)) ++ "px"), 
-            style "left" ((String.fromFloat (-1 * width / 2)) ++ "px"),
-            style "border-bottom" (toString (width / 4) ++ "px solid transparent"),
-            style "border-top" (toString (width / 4) ++ "px solid transparent"),
-            style "border-right" (toString (height / 2) ++ "px solid orange")
+            style "top" ((String.fromFloat (radius / 2)) ++ "px"), 
+            style "left" ((String.fromFloat (-1 * radius)) ++ "px"),
+            style "border-bottom" (toString (radius / 2) ++ "px solid transparent"),
+            style "border-top" (toString (radius / 2) ++ "px solid transparent"),
+            style "border-right" (toString radius ++ "px solid orange")
         ] []
     )
     ]
 
 renderLaser : Entity -> Html Msg
-renderLaser {x, y, width, height, theta} = 
+renderLaser {radius} = 
     div [
-        style "width" ((String.fromFloat width) ++ "px"), 
-        style "height" ((String.fromFloat height) ++ "px"),
+        style "position" "absolute",
+        style "left" ((String.fromFloat (radius * -7.5)) ++ "px"),
+        style "width" ((String.fromFloat (radius * 15)) ++ "px"), 
+        style "height" ((String.fromFloat (radius * 2)) ++ "px"),
         style "background-color" "red"
     ] []
 
 renderExplosion : Entity -> Html Msg
-renderExplosion {x, y, ticksLeft, width} = 
-    let
-        radius = (round width) -- ticksLeft
-        fradius = toFloat radius
-    in
-        div [
-            -- style "position" "absolute",
-            -- style "top" ((String.fromFloat (y - fradius / 2)) ++ "px"), 
-            -- style "left" ((String.fromFloat (x - fradius / 2)) ++ "px"),
-            style "width" ((String.fromInt radius) ++ "px"), 
-            style "height" ((String.fromInt radius) ++ "px"),
-            style "border-radius" "50%",
-            style "background-color" "orange",
-            style "opacity" "50%"
-        ] []
+renderExplosion {radius} = 
+    div [
+        -- style "position" "absolute",
+        -- style "top" ((String.fromFloat (y - fradius / 2)) ++ "px"), 
+        -- style "left" ((String.fromFloat (x - fradius / 2)) ++ "px"),
+        style "width" ((String.fromFloat (radius * 2)) ++ "px"), 
+        style "height" ((String.fromFloat (radius * 2)) ++ "px"),
+        style "border-radius" "50%",
+        style "background-color" "orange",
+        style "opacity" "50%"
+    ] []
 
 renderFuelDepot : Entity -> Html Msg
-renderFuelDepot {x, y, width, height, supplyRadius, fuel, maxFuel} = 
+renderFuelDepot {radius, supplyRadius, fuel, maxFuel} = 
     div [] [
         div [
             -- style "position" "absolute",
             -- style "top" "0px", style "left" "0px",
-            style "width" ((String.fromFloat width) ++ "px"), 
-            style "height" ((String.fromFloat height) ++ "px"),
+            style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
+            style "height" ((String.fromFloat (2 * radius)) ++ "px"),
             style "border" "2px solid orange"
         ] [],
         div [
             style "position" "absolute",
             style "top" "2px", style "left" "2px",
-            style "width" ((String.fromFloat width) ++ "px"), 
-            style "height" (String.fromFloat ((toFloat fuel) / (toFloat maxFuel) * height) ++ "px"),
+            style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
+            style "height" (String.fromFloat ((toFloat fuel) / (toFloat maxFuel) * (2 * radius)) ++ "px"),
             style "background-color" "orange"
         ] [],
         div [
             style "position" "absolute",
-            style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
-            style "left" ((String.fromFloat (-1 * supplyRadius + width / 2)) ++ "px"),
+            style "top" ((String.fromFloat (-1 * supplyRadius + radius)) ++ "px"), 
+            style "left" ((String.fromFloat (-1 * supplyRadius + radius)) ++ "px"),
             style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
             style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
             style "border-radius" "50%",
@@ -398,25 +396,25 @@ renderFuelDepot {x, y, width, height, supplyRadius, fuel, maxFuel} =
     ]
 
 renderAmmoDepot : Entity -> Html Msg
-renderAmmoDepot {x, y, width, height, supplyRadius, ammo, maxAmmo} = 
+renderAmmoDepot {radius, supplyRadius, ammo, maxAmmo} = 
     div [] [
         div [
             style "position" "absolute",
-            style "width" ((String.fromFloat width) ++ "px"), 
-            style "height" ((String.fromFloat height) ++ "px"),
+            style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
+            style "height" ((String.fromFloat (2 * radius)) ++ "px"),
             style "border" "2px solid red"
         ] [],
         div [
             style "position" "absolute",
             style "top" "2px", style "left" "2px",
-            style "width" ((String.fromFloat width) ++ "px"), 
-            style "height" (String.fromFloat ((toFloat ammo) / (toFloat maxAmmo) * height) ++ "px"),
+            style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
+            style "height" (String.fromFloat ((toFloat ammo) / (toFloat maxAmmo) * (2 * radius)) ++ "px"),
             style "background-color" "red"
         ] [],
         div [
             style "position" "absolute",
-            style "top" ((String.fromFloat (-1 * supplyRadius + height / 2)) ++ "px"), 
-            style "left" ((String.fromFloat (-1 * supplyRadius + width / 2)) ++ "px"),
+            style "top" ((String.fromFloat (-1 * supplyRadius + radius)) ++ "px"), 
+            style "left" ((String.fromFloat (-1 * supplyRadius + radius)) ++ "px"),
             style "width" ((String.fromFloat (supplyRadius * 2)) ++ "px"), 
             style "height" ((String.fromFloat (supplyRadius * 2)) ++ "px"),
             style "border-radius" "50%",
@@ -426,21 +424,19 @@ renderAmmoDepot {x, y, width, height, supplyRadius, ammo, maxAmmo} =
 
 
 renderBoundingCircle : Entity -> Html msg
-renderBoundingCircle { x, y, width, height } =
-    let
-        radius = min (width / 2) (height / 2)
-    in
-        div
-            [ style "position" "absolute"
-            , style "border" "2px dashed red"
-            , style "border-radius" "50%"
-            , style "width" (String.fromFloat (radius * 2) ++ "px")
-            , style "height" (String.fromFloat (radius * 2) ++ "px")
-            , style "top" "0px"
-            , style "left" "0px"
-            , style "background-color" "rgba(255, 0, 0, 0.3)" -- Semi-transparent fill
-            ]
-            []
+renderBoundingCircle {radius} =
+    div
+        [ style "position" "absolute"
+        , style "border" "2px dashed red"
+        , style "border-radius" "50%"
+        , style "width" (String.fromFloat (radius * 2) ++ "px")
+        , style "height" (String.fromFloat (radius * 2) ++ "px")
+        , style "top" "0px"
+        , style "left" "0px"
+        , style "background-color" "rgba(255, 0, 0, 0.3)" -- Semi-transparent fill
+        , style "box-sizing" "border-box"
+        ]
+        []
 
 emptyShape : Html Msg
 emptyShape = span [] []
@@ -456,7 +452,7 @@ defaultEntity = {
     speed = 0, maxSpeed = 0,
     theta = 0, thetaSpeed = 0,
     accel = 0, 
-    width = 0, height = 0,
+    radius = 0,
     ticksLeft = 0,
 
     fuel = 0, maxFuel = 0,
@@ -485,7 +481,8 @@ addEntities entities model = case entities of
 
 makeShip : Float -> Float -> Entity 
 makeShip x y = {defaultEntity | 
-    x = x, y = y, width = 15, height = 15,
+    x = x, y = y, 
+    radius = 8,
     name = "Ship",
     maxSpeed = 4,
     fuel = 300, maxFuel = 300,
@@ -497,7 +494,8 @@ makeShip x y = {defaultEntity |
 
 makeAsteroid : Float -> Float -> Float -> Float -> Entity 
 makeAsteroid x y speed theta = {defaultEntity | 
-    x = x, y = y, width = 20, height = 20,
+    x = x, y = y, 
+    radius = 10,
     name = "Asteroid",
     speed = speed,
     theta = theta,
@@ -506,7 +504,8 @@ makeAsteroid x y speed theta = {defaultEntity |
 
 makeLaser : Float -> Float -> Float -> Entity
 makeLaser x y theta = {defaultEntity |
-    x = x, y = (y), width = 15, height = 2, 
+    x = x, y = y, 
+    radius = 1,
     name = "Laser",
     speed = 8,
     theta = theta,
@@ -519,7 +518,7 @@ makeExplosion : Float -> Float -> Int -> Entity
 makeExplosion x y ticks = {defaultEntity | 
         name = "Explosion",
         x = x, y = y,
-        width = 1, height = 1,
+        radius = 1,
         ticksLeft = ticks,
         isShortLived = True
     }
@@ -528,10 +527,10 @@ makeFuelDepot : Float -> Float -> Float -> Float -> Entity
 makeFuelDepot x y speed theta = {defaultEntity |
     name = "Fuel Depot",
     x = x, y = y, 
-    width = 20, height = 20,
+    radius = 10,
     supplyRadius = 120,
     speed = speed,
-    theta = theta,
+    theta = pi,
     maxSpeed = 1,
     fuel = 1000, maxFuel = 1000,
     isFuelDepot = True
@@ -541,10 +540,10 @@ makeAmmoDepot : Float -> Float -> Float -> Float -> Entity
 makeAmmoDepot x y speed theta = {defaultEntity |
     name = "Ammo Depot",
     x = x, y = y, 
-    width = 20, height = 20,
+    radius = 10,
     supplyRadius = 120,
     speed = speed,
-    theta = theta,
+    theta = 0,
     maxSpeed = 1,
     ammo = 50, maxAmmo = 50,
     isAmmoDepot = True
@@ -697,43 +696,9 @@ collidesAny entity entities = case entities of
         then Just { e | isCollided = entity.name }
         else collidesAny entity rest
 
--- collides : Entity -> Entity -> Bool
--- collides ea eb = ((eb.x > ea.x && eb.x < ea.x + ea.width) ||
---     (ea.x > eb.x && ea.x < eb.x + eb.width)) &&
---     ((eb.y > ea.y && eb.y < ea.y + ea.height) ||
---     (ea.y > eb.y && ea.y < eb.y + eb.height))
-
 collides : Entity -> Entity -> Bool
 collides ea eb =
-    let
-        distance = sqrt ((eb.x - ea.x) ^ 2 + (eb.y - ea.y) ^ 2)
-        -- Calculate the sum of the radii (assuming ea and eb are close enough to circular)
-        radiusA = min (ea.width / 2) (ea.height / 2)
-        radiusB = min (eb.width / 2) (eb.height / 2)
-        radiiSum = radiusA + radiusB
-    in
-        -- If the distance between centers is less than the sum of the radii, they're colliding
-        distance < radiiSum
-
-
--- collides : Entity -> Entity -> Bool
--- collides ea eb =
---     let
---         -- Calculate the X and Y range for ea's area
---         eaLeft = ea.x - (ea.width / 2)
---         eaRight = ea.x + (ea.width / 2)
---         eaTop = ea.y - (ea.height / 2)
---         eaBottom = ea.y + (ea.height / 2)
---         -- Calculate the X and Y range for eb's area
---         ebLeft = eb.x - (eb.width / 2)
---         ebRight = eb.x + (eb.width / 2)
---         ebTop = eb.y - (eb.height / 2)
---         ebBottom = eb.y + (eb.height / 2)
---     in
---         -- Check if ea's area intersects with eb's area horizontally
---         ((ebLeft < eaRight) && (ebRight > eaLeft)) &&
---         -- Check if ea's area intersects with eb's area vertically
---         ((ebTop < eaBottom) && (ebBottom > eaTop))
+    sqrt ((eb.x - ea.x) ^ 2 + (eb.y - ea.y) ^ 2) < ea.radius + eb.radius
 
 
 destroyCollisions : EntitySystem
@@ -762,7 +727,7 @@ makeExplosions ({nextId, entities} as model) =
 
 stepExplosions : EntitySystem 
 stepExplosions entities = map (\e -> case e.name of 
-        "Explosion" -> { e | width = e.width + 1, height = e.height + 1 }
+        "Explosion" -> { e | radius = e.radius + 0.5 }
         _ -> e
     ) entities
 
