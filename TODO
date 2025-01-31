@@ -3,8 +3,10 @@
     - use animationFrame instead of tick
 
 - bugs
+    - collision
 
 - features
+    - big/med/small asteroids
     - detect game over and throw up modal
     - spawn new asteroids from outside the screen
 
@@ -15,7 +17,6 @@
         - transport ships
         - how to reroute stations?
     - Teching up the ship
-    - big/med/small asteroids
     - larger world outside the screen
     
         

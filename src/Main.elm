@@ -23,9 +23,9 @@ main : Program () Model Msg
 main = Browser.element { init = init, update = update, view = view, subscriptions = subs }
 
 screenWidth : number
-screenWidth = 1200
+screenWidth = 1437
 screenHeight : number
-screenHeight = 1000
+screenHeight = 832
 
 
 type alias Model = {
@@ -42,6 +42,7 @@ type Msg = Tick Time.Posix
     | KeyDown String | KeyUp String 
     | WindowResize Int Int | GetViewport Viewport
     | RandomAsteroid XYSpeedTheta
+    | RandomBigAsteroid XYSpeedTheta
     | RandomFuelDepot XYSpeedTheta
     | RandomAmmoDepot XYSpeedTheta
 
@@ -106,6 +107,12 @@ init _ = ({
         generate RandomAsteroid (outerRandomXYSpeedTheta 2),
         generate RandomAsteroid (outerRandomXYSpeedTheta 2),
         generate RandomAsteroid (outerRandomXYSpeedTheta 2),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
+        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
         generate RandomFuelDepot (innerRandomXYSpeedTheta 0.25),
         generate RandomAmmoDepot (innerRandomXYSpeedTheta 0.25)
         ])
@@ -164,7 +171,8 @@ update msg ({tick, paused, entities} as model) = case msg of
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
     Restart -> init () |> (\ (m, cmds) -> ({m | paused = False}, cmds))
     WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
-    RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y speed theta) model, Cmd.none)
+    RandomBigAsteroid {x, y, speed, theta} -> (addEntity (makeBigAsteroid x y speed theta) model, Cmd.none)
+    RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y (speed + 0.25) theta) model, Cmd.none)
     RandomFuelDepot {x, y, speed, theta} -> (addEntity (makeFuelDepot x y speed theta) model, Cmd.none)
     RandomAmmoDepot {x, y, speed, theta} -> (addEntity (makeAmmoDepot x y speed theta) model, Cmd.none)
     GetViewport v -> ({model | 
@@ -275,6 +283,7 @@ renderEntities entities model = case entities of
 renderEntity : Entity -> Model -> Html Msg
 renderEntity entity model = case entity.name of 
     "Asteroid" -> render model renderAsteroid entity
+    "Big Asteroid" -> render model renderAsteroid entity
     "Ship" -> render model renderShip entity
     "Laser" -> render model renderLaser entity
     "Explosion" -> render model renderExplosion entity
@@ -502,6 +511,16 @@ makeAsteroid x y speed theta = {defaultEntity |
     maxSpeed = 2
     }
 
+makeBigAsteroid : Float -> Float -> Float -> Float -> Entity 
+makeBigAsteroid x y speed theta = {defaultEntity | 
+    x = x, y = y, 
+    radius = 25,
+    name = "Big Asteroid",
+    speed = speed,
+    theta = theta,
+    maxSpeed = 1.5
+    }
+
 makeLaser : Float -> Float -> Float -> Entity
 makeLaser x y theta = {defaultEntity |
     x = x, y = y, 
@@ -528,7 +547,7 @@ makeFuelDepot x y speed theta = {defaultEntity |
     name = "Fuel Depot",
     x = x, y = y, 
     radius = 10,
-    supplyRadius = 120,
+    supplyRadius = 100,
     speed = speed,
     theta = theta,
     maxSpeed = 1,
@@ -566,6 +585,7 @@ applySystems model =
     |> (\ mod -> {mod | entities = destroyCollisions mod.entities})
     |> makeExplosions
     |> (\ mod -> {mod | entities = stepExplosions mod.entities})
+    |> makeAsteroids
     |> (\ mod -> {mod | entities = destroyEntities mod.entities})
 
 
@@ -730,6 +750,20 @@ stepExplosions entities = map (\e -> case e.name of
         "Explosion" -> { e | radius = e.radius + 0.5 }
         _ -> e
     ) entities
+
+makeAsteroids : ModelSystem
+makeAsteroids ({nextId, entities} as model) =
+    let 
+        asteroids = filter 
+            (\e -> e.name == "Big Asteroid" && e.isDestroyed) entities
+            |> foldl (\ e es -> 
+                (makeAsteroid e.x e.y 1 (e.theta * 0.5)) :: 
+                (makeAsteroid e.x e.y 1.1 (e.theta * 1.5)) :: es) []
+            |> indexedMap (\ i e -> { e | id = nextId + i})
+    in { model |
+        nextId = length asteroids + nextId,
+        entities = asteroids ++ entities
+    }
 
 
 destroyEntities : EntitySystem
