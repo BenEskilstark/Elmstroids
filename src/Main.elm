@@ -308,7 +308,7 @@ render model renderFn entity =
             style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
         ] [
             renderFn e
-            , renderBoundingCircle e
+            -- , renderBoundingCircle e
         ]
 
 renderAsteroid : Entity -> Html Msg
@@ -530,7 +530,7 @@ makeFuelDepot x y speed theta = {defaultEntity |
     radius = 10,
     supplyRadius = 120,
     speed = speed,
-    theta = pi,
+    theta = theta,
     maxSpeed = 1,
     fuel = 1000, maxFuel = 1000,
     isFuelDepot = True
@@ -543,7 +543,7 @@ makeAmmoDepot x y speed theta = {defaultEntity |
     radius = 10,
     supplyRadius = 120,
     speed = speed,
-    theta = 0,
+    theta = theta,
     maxSpeed = 1,
     ammo = 50, maxAmmo = 50,
     isAmmoDepot = True
