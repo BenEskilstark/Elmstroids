@@ -355,7 +355,7 @@ renderLaser {x, y, width, height, theta} =
 renderExplosion : Entity -> Html Msg
 renderExplosion {x, y, ticksLeft, width} = 
     let
-        radius = (round width) - ticksLeft
+        radius = (round width) -- ticksLeft
         fradius = toFloat radius
     in
         div [
@@ -519,7 +519,7 @@ makeExplosion : Float -> Float -> Int -> Entity
 makeExplosion x y ticks = {defaultEntity | 
         name = "Explosion",
         x = x, y = y,
-        width = 20,
+        width = 1, height = 1,
         ticksLeft = ticks,
         isShortLived = True
     }
@@ -566,6 +566,7 @@ applySystems model =
     |> (\ mod -> {mod | entities = computeCollisions mod.entities})
     |> (\ mod -> {mod | entities = destroyCollisions mod.entities})
     |> makeExplosions
+    |> (\ mod -> {mod | entities = stepExplosions mod.entities})
     |> (\ mod -> {mod | entities = destroyEntities mod.entities})
 
 
@@ -758,6 +759,12 @@ makeExplosions ({nextId, entities} as model) =
         nextId = length explosions + nextId, 
         entities = explosions ++ entities
     }
+
+stepExplosions : EntitySystem 
+stepExplosions entities = map (\e -> case e.name of 
+        "Explosion" -> { e | width = e.width + 1, height = e.height + 1 }
+        _ -> e
+    ) entities
 
 
 destroyEntities : EntitySystem
