@@ -9,7 +9,7 @@ import Html exposing (Html, div, text, span, ul, li, h4)
 import Html.Attributes exposing (style)
 import Html.Events exposing (preventDefaultOn)
 import Json.Decode as Decode
-import List exposing (map, head, filter, indexedMap, foldl, length)
+import List exposing (map, head, filter, indexedMap, foldl, length, any)
 import Maybe exposing (Maybe, andThen)
 import Debug exposing (toString)
 import Time
@@ -23,9 +23,11 @@ main : Program () Model Msg
 main = Browser.element { init = init, update = update, view = view, subscriptions = subs }
 
 screenWidth : number
-screenWidth = 1437
+screenWidth = 1300
+-- screenWidth = 1470
 screenHeight : number
-screenHeight = 832
+screenHeight = 800
+-- screenHeight = 832
 
 
 type alias Model = {
@@ -35,10 +37,12 @@ type alias Model = {
         nextId: EntityId,
         width: Int, height: Int,
         windowWidth: Int, windowHeight: Int,
-        leftPressed: Bool, rightPressed: Bool, upPressed: Bool
+        leftPressed: Bool, rightPressed: Bool, upPressed: Bool,
+        isGameLost: Bool, isGameWon: Bool,
+        difficulty: Int
     }
 type Msg = Tick Time.Posix 
-    | TogglePause | Restart
+    | TogglePause | Restart Int
     | KeyDown String | KeyUp String 
     | WindowResize Int Int | GetViewport Viewport
     | RandomAsteroid XYSpeedTheta
@@ -54,20 +58,27 @@ type alias Entity = {
     speed: Float, maxSpeed: Float,
     accel: Float,
     theta: Float, thetaSpeed: Float,
-    ticksLeft: Int,
 
-    fuel: Int, maxFuel: Int,
-    ammo: Int, maxAmmo: Int,
-    supplyRadius: Float,
+    isCollided: Bool, 
+    collidedWith: String, -- name of entity it collided with
+
+    isDestroyed: Bool,
+    isPlayerControlled: Bool,
 
     isFueled: Bool,
     isFuelDepot: Bool,
+    fuel: Int, maxFuel: Int,
     isArmed: Bool,
     isAmmoDepot: Bool,
-    isCollided: String, -- name of entity it collided with
-    isDestroyed: Bool,
-    isPlayerControlled: Bool,
-    isShortLived: Bool
+    ammo: Int, maxAmmo: Int,
+    supplyRadius: Float,
+
+    isShortLived: Bool,
+    ticksLeft: Int,
+
+    isShielded: Bool,
+    shieldRadius: Float,
+    shieldHP: Int
     }
 
 type alias ModelSystem = Model -> Model
@@ -82,40 +93,38 @@ type alias XYSpeedTheta = {
 --------------------------------------------------------------------------------
 ---------------------------- INIT ----------------------------------------------
 init : () -> (Model, Cmd Msg)
-init _ = ({
+init _ = doInit 2
+
+doInit : Int -> (Model, Cmd Msg)
+doInit difficulty = ({
         tick = 0, paused = True, isDebugMode = False,
         entities = [], nextId = 1, 
         width = screenWidth, height = screenHeight,
         windowWidth = 600, windowHeight = 600,
-        leftPressed = False, rightPressed = False, upPressed = False
+        leftPressed = False, rightPressed = False, upPressed = False,
+        isGameLost = False, isGameWon = False, 
+        difficulty = difficulty
         } 
     |> addEntities initialEntities, 
-    Cmd.batch [
+    Cmd.batch ([
         Task.perform GetViewport Browser.Dom.getViewport,
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomAsteroid (outerRandomXYSpeedTheta 2),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
-        generate RandomBigAsteroid (outerRandomXYSpeedTheta 1.5),
         generate RandomFuelDepot (innerRandomXYSpeedTheta 0.25),
         generate RandomAmmoDepot (innerRandomXYSpeedTheta 0.25)
-        ])
+        ]
+        ++ ((generateAsteroids (8 + 2 * difficulty) (1.8 + 0.1 * (toFloat difficulty)))
+        ++ (generateBigAsteroids (2 * difficulty) 1.5))
+    ))
+
+generateAsteroids : number -> Float -> List (Cmd Msg)
+generateAsteroids numAsteroids speed = if numAsteroids == 0 then [] else
+    generate RandomAsteroid (outerRandomXYSpeedTheta speed) 
+        :: (generateAsteroids (numAsteroids - 1) speed)
+
+generateBigAsteroids : number -> Float -> List (Cmd Msg)
+generateBigAsteroids numAsteroids speed = if numAsteroids == 0 then [] else
+    generate RandomBigAsteroid (outerRandomXYSpeedTheta speed) 
+        :: (generateAsteroids (numAsteroids - 1) speed)
+
 
 initialEntities : List Entity
 initialEntities = [
@@ -169,7 +178,7 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg ({tick, paused, entities} as model) = case msg of
     Tick _ -> ({ model | tick = tick + 1} |> applySystems, Cmd.none)
     TogglePause -> ({ model | paused = not paused }, Cmd.none)
-    Restart -> init () |> (\ (m, cmds) -> ({m | paused = False}, cmds))
+    Restart d -> doInit d |> (\ (m, cmds) -> ({m | paused = False}, cmds))
     WindowResize w h -> ({model | windowWidth = w, windowHeight = h}, Cmd.none)
     RandomBigAsteroid {x, y, speed, theta} -> (addEntity (makeBigAsteroid x y speed theta) model, Cmd.none)
     RandomAsteroid {x, y, speed, theta} -> (addEntity (makeAsteroid x y (speed + 0.25) theta) model, Cmd.none)
@@ -228,7 +237,7 @@ viewStart _ = UI.fullscreen
 
 
 viewGame : Model -> Html Msg
-viewGame ({entities, paused} as model) = UI.fullscreen
+viewGame ({entities, paused, isGameLost, isGameWon, difficulty} as model) = UI.fullscreen
     <| div [
         preventDefaultOn "keydown" keyDecoder
     ] [
@@ -250,10 +259,28 @@ viewGame ({entities, paused} as model) = UI.fullscreen
                 (if paused then "Start" else "Pause") 
                 TogglePause UI.Default
             ),
-            UI.toButton (UI.Clickable "Restart" Restart UI.Reject),
+            UI.toButton (UI.Clickable "Restart" (Restart difficulty) UI.Reject),
             span [] [text ("Fuel: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.fuel))))],
-            span [] [text ("Ammo: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.ammo))))]
-        ])
+            span [] [text ("Ammo: " ++ (toString ((filter .isPlayerControlled entities) |> map (\ e -> e.ammo))))],
+            (if difficulty > 2 
+                then span [] [text ("Level: " ++ (toString (difficulty - 1)))]
+                else span [] []
+            )
+        ]),
+        (if isGameLost then 
+            UI.modal [(UI.Clickable "Restart" (Restart difficulty) UI.Reject)] 
+            (div [] [
+                h4 [] [ text "You've been destroyed!"],
+                text "Try Again?"
+            ]) else span [] []
+        ),
+        (if isGameWon then 
+            UI.modal [(UI.Clickable "Next Difficulty" (Restart (difficulty + 1)) UI.Reject)] 
+            (div [] [
+                h4 [] [ text "You Won!"],
+                text "Try again on higher difficulty (more, faster, asteroids)?"
+            ]) else span [] []
+        )
     ]
 
 keyDecoder : Decoder (Msg, Bool)
@@ -289,7 +316,7 @@ renderEntity entity model = case entity.name of
     "Explosion" -> render model renderExplosion entity
     "Fuel Depot" -> render model renderFuelDepot entity
     "Ammo Depot" -> render model renderAmmoDepot entity
-    _ -> emptyShape
+    _ -> noShape
 
 normalizeRenderingToWindow : Model -> Entity -> Entity
 normalizeRenderingToWindow {width, height, windowWidth, windowHeight} mov = 
@@ -316,7 +343,8 @@ render model renderFn entity =
             style "transform-origin" "center",
             style "transform" ("rotate(" ++ (String.fromFloat (180 / pi * theta)) ++ "deg)")
         ] [
-            renderFn e
+            renderFn e,
+            renderShield e
             -- , renderBoundingCircle e
         ]
 
@@ -341,7 +369,7 @@ renderShip ({accel, radius}) = div [] [
         -- style "height" ((String.fromFloat height) ++ "px")
         
     ] [],
-    if accel <= 0 then emptyShape else (
+    if accel <= 0 then noShape else (
         div [
             style "position" "absolute",
             style "top" ((String.fromFloat (radius / 2)) ++ "px"), 
@@ -352,6 +380,21 @@ renderShip ({accel, radius}) = div [] [
         ] []
     )
     ]
+
+renderShield : Entity -> Html Msg
+renderShield {shieldHP, shieldRadius, radius} = if shieldHP <= 0 then noShape else
+    div
+        [ style "position" "absolute"
+        , style "border" "1px solid blue"
+        , style "border-radius" "50%"
+        , style "width" (String.fromFloat (shieldRadius * 2) ++ "px")
+        , style "height" (String.fromFloat (shieldRadius * 2) ++ "px")
+        , style "top" ((String.fromFloat (-1 * shieldRadius + radius)) ++ "px")
+        , style "left" ((String.fromFloat (-1 * shieldRadius + radius)) ++ "px")
+        -- , style "background-color" "rgba(0, 0, 200, 0.3)" -- Semi-transparent fill
+        , style "box-sizing" "border-box"
+        ]
+        []
 
 renderLaser : Entity -> Html Msg
 renderLaser {radius} = 
@@ -380,8 +423,6 @@ renderFuelDepot : Entity -> Html Msg
 renderFuelDepot {radius, supplyRadius, fuel, maxFuel} = 
     div [] [
         div [
-            -- style "position" "absolute",
-            -- style "top" "0px", style "left" "0px",
             style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
             style "height" ((String.fromFloat (2 * radius)) ++ "px"),
             style "border" "2px solid orange"
@@ -408,7 +449,6 @@ renderAmmoDepot : Entity -> Html Msg
 renderAmmoDepot {radius, supplyRadius, ammo, maxAmmo} = 
     div [] [
         div [
-            style "position" "absolute",
             style "width" ((String.fromFloat (2 * radius)) ++ "px"), 
             style "height" ((String.fromFloat (2 * radius)) ++ "px"),
             style "border" "2px solid red"
@@ -447,8 +487,8 @@ renderBoundingCircle {radius} =
         ]
         []
 
-emptyShape : Html Msg
-emptyShape = span [] []
+noShape : Html msg
+noShape = span [] []
 
 
 
@@ -462,20 +502,27 @@ defaultEntity = {
     theta = 0, thetaSpeed = 0,
     accel = 0, 
     radius = 0,
+
+    isShortLived = False,
     ticksLeft = 0,
 
+    isCollided = False,
+    collidedWith = "",
+
+    isDestroyed = False,
+    isPlayerControlled = False,
+    
+    isFueled = False,
+    isFuelDepot = False,
     fuel = 0, maxFuel = 0,
+    isArmed = False,
+    isAmmoDepot = False,
     ammo = 0, maxAmmo = 0,
     supplyRadius = 0,
 
-    isCollided = "",
-    isPlayerControlled = False,
-    isShortLived = False,
-    isDestroyed = False,
-    isFueled = False,
-    isFuelDepot = False,
-    isArmed = False,
-    isAmmoDepot = False
+    isShielded = False,
+    shieldRadius = 0,
+    shieldHP = 0
     }
 
 addEntity : Entity -> Model -> Model
@@ -494,11 +541,17 @@ makeShip x y = {defaultEntity |
     radius = 8,
     name = "Ship",
     maxSpeed = 4,
-    fuel = 300, maxFuel = 300,
-    ammo = 5, maxAmmo = 10,
-    isPlayerControlled = True,
     isFueled = True,
-    isArmed = True
+    fuel = 300, maxFuel = 300,
+
+    isArmed = True,
+    ammo = 5, maxAmmo = 10,
+
+    isPlayerControlled = True,
+
+    isShielded = True,
+    shieldRadius = 20,
+    shieldHP = 1
     }
 
 makeAsteroid : Float -> Float -> Float -> Float -> Entity 
@@ -552,7 +605,11 @@ makeFuelDepot x y speed theta = {defaultEntity |
     theta = theta,
     maxSpeed = 1,
     fuel = 1000, maxFuel = 1000,
-    isFuelDepot = True
+    isFuelDepot = True,
+
+    isShielded = True,
+    shieldRadius = 45,
+    shieldHP = 1
     }
 
 makeAmmoDepot : Float -> Float -> Float -> Float -> Entity
@@ -582,11 +639,13 @@ applySystems model =
     |> (\ mod -> {mod | entities = rearmEntities mod.entities})
     |> (\ mod -> {mod | entities = useFuel mod.entities})
     |> (\ mod -> {mod | entities = computeCollisions mod.entities})
+    |> (\ mod -> {mod | entities = shieldCollisions mod.entities})
     |> (\ mod -> {mod | entities = destroyCollisions mod.entities})
     |> makeExplosions
     |> (\ mod -> {mod | entities = stepExplosions mod.entities})
     |> makeAsteroids
     |> (\ mod -> {mod | entities = destroyEntities mod.entities})
+    |> checkGameOver
 
 
 moveEntities : EntitySystem
@@ -706,28 +765,59 @@ computeCollisions entities = case entities of
     [] -> []
     ea :: rest -> case collidesAny ea rest of
         Nothing -> ea :: computeCollisions rest
-        Just eb -> {ea | isCollided = eb.name} 
+        Just eb -> {ea | isCollided = True, collidedWith = eb.name} 
             :: computeCollisions (setEntity eb rest)
 
 collidesAny : Entity -> List Entity -> Maybe Entity
 collidesAny entity entities = case entities of
     [] -> Nothing
     e :: rest -> if collides entity e 
-        then Just { e | isCollided = entity.name }
+        then Just { e | isCollided = True, collidedWith = entity.name }
         else collidesAny entity rest
 
 collides : Entity -> Entity -> Bool
 collides ea eb =
-    sqrt ((eb.x - ea.x) ^ 2 + (eb.y - ea.y) ^ 2) < ea.radius + eb.radius
+    let 
+        a1 = if ea.isShielded && ea.shieldHP > 0 then ea.shieldRadius else ea.radius
+        b1 = if eb.isShielded && eb.shieldHP > 0 then eb.shieldRadius else eb.radius
+        -- (aradius, bradius) = if ea.isShielded && eb.isShielded then (ea.radius, eb.radius) else (a1, b1)
+    in
+        sqrt ((eb.x - ea.x) ^ 2 + (eb.y - ea.y) ^ 2) < a1 + b1
 
+
+shieldCollisions : EntitySystem 
+shieldCollisions entities = map (\ e -> 
+    case e.collidedWith of
+        "Asteroid" -> if e.name /= "Asteroid" && e.shieldHP > 0
+            then {e | shieldHP = e.shieldHP - 1, isCollided = False, collidedWith = ""} 
+            else e
+        "Laser" -> if e.name /= "Ship" && e.shieldHP > 0
+            then {e | shieldHP = e.shieldHP - 1, isCollided = False, collidedWith = ""} 
+            else e
+        "Ship" -> if e.name /= "Laser" && e.shieldHP > 0
+            then {e | shieldHP = e.shieldHP - 1, isCollided = False, collidedWith = ""} 
+            else e
+        "Explosion" -> e
+        "" -> e
+        _ -> if e.shieldHP > 0
+            then {e | shieldHP = e.shieldHP - 1, isCollided = False, collidedWith = ""} 
+            else e
+    ) entities
+    
 
 destroyCollisions : EntitySystem
 destroyCollisions entities = map (\ e -> 
-    case e.isCollided of
-        "Asteroid" -> if e.name /= "Asteroid" then {e |isDestroyed = True} else e
-        "Laser" -> if e.name /= "Ship" then {e |isDestroyed = True} else e
-        "Ship" -> if e.name /= "Laser" then {e |isDestroyed = True} else e
-        "Explosion" -> e
+    case e.collidedWith of
+        "Asteroid" -> if e.name /= "Asteroid" 
+            then {e | isDestroyed = True} 
+            else {e | isCollided = False, collidedWith = ""}
+        "Laser" -> if e.name /= "Ship" 
+            then {e | isDestroyed = True} 
+            else {e | isCollided = False, collidedWith = ""}
+        "Ship" -> if e.name /= "Laser" 
+            then {e | isDestroyed = True} 
+            else {e | isCollided = False, collidedWith = ""}
+        "Explosion" -> {e | isCollided = False, collidedWith = ""}
         "" -> e
         _ -> {e | isDestroyed = True}
     ) entities
@@ -769,7 +859,17 @@ makeAsteroids ({nextId, entities} as model) =
 destroyEntities : EntitySystem
 destroyEntities entities = filter (\e -> e.isDestroyed == False) entities
 
-
+checkGameOver : ModelSystem
+checkGameOver ({entities} as model) = 
+    let 
+        lost = not (any (\e -> e.name == "Ship") entities)
+        won = not (any (\e -> e.name == "Asteroid" || e.name == "Big Asteroid") entities)
+    in
+        {model | 
+            isGameLost = lost,
+            isGameWon = won,
+            paused = won || lost
+        }
 
 --------------------------------------------------------------------------------
 --------------------------- HELPERS --------------------------------------------

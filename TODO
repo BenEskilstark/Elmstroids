@@ -1,14 +1,12 @@
 - Refactors
     - figure out how Random.andThen works
     - use animationFrame instead of tick
-
-- bugs
-    - collision
+    - render circle, triangle, etc. functions
 
 - features
-    - big/med/small asteroids
-    - detect game over and throw up modal
     - spawn new asteroids from outside the screen
+    - speed boost
+    - missiles
 
 - ideas
     - Establishing new stations
